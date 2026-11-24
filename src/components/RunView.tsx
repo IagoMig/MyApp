@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import Link from "next/link";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   Play,
@@ -12,6 +13,7 @@ import {
   X,
   Trash2,
   Footprints,
+  Dumbbell,
 } from "lucide-react";
 import { GlassCard, GlassButton } from "./Glass";
 import { RunMap } from "./RunMap";
@@ -344,6 +346,24 @@ export function RunView() {
 
   return (
     <div className="space-y-5 pt-2">
+      {/* Sub-navigation switcher: Treinos | Corrida */}
+      <div className="glass-obsidian grid grid-cols-2 gap-1.5 rounded-2xl p-1">
+        <Link
+          href="/treino"
+          className="flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-medium text-zinc-400 hover:text-white transition-all"
+        >
+          <Dumbbell className="h-3.5 w-3.5" />
+          <span>Treinos</span>
+        </Link>
+        <Link
+          href="/corrida"
+          className="glass-pill-active flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-medium transition-all"
+        >
+          <Footprints className="h-3.5 w-3.5" />
+          <span>Corrida</span>
+        </Link>
+      </div>
+
       {/* Minimal Header */}
       <header className="flex items-center justify-between px-1">
         <h1 className="text-[26px] font-semibold tracking-tight text-white">
@@ -368,7 +388,7 @@ export function RunView() {
           fitRouteTrigger={fitTrigger}
         />
 
-        <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+        <div className="absolute top-4 right-4 z-[500] flex items-center gap-2">
           {inspectedRun && (
             <GlassButton
               type="button"
@@ -389,7 +409,7 @@ export function RunView() {
         </div>
 
         {gpsError && !inspectedRun && (
-          <div className="absolute bottom-4 left-4 z-10 glass-dock rounded-full px-3.5 py-1.5 text-xs text-zinc-200">
+          <div className="absolute bottom-4 left-4 z-[500] glass-dock rounded-full px-3.5 py-1.5 text-xs text-zinc-200">
             {gpsError}
           </div>
         )}

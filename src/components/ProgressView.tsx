@@ -11,12 +11,16 @@ import {
   X,
   Trash2,
   Upload,
+  BookMarked,
+  ChevronRight,
 } from "lucide-react";
 import { GlassCard, GlassButton } from "./Glass";
+import { PhotoBookModal } from "./PhotoBookModal";
 import {
   db,
   DEFAULT_SETTINGS,
   getDateKey,
+  getMonthKey,
   formatShortDatePt,
   type PhotoAngle,
   type ProgressPhoto,
@@ -46,6 +50,7 @@ export function ProgressView() {
   const [filter, setFilter] = useState<"todas" | PhotoAngle>("todas");
   const [blurred, setBlurred] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
+  const [bookOpen, setBookOpen] = useState(false);
   const [sliderPct, setSliderPct] = useState(50);
   const [beforeId, setBeforeId] = useState<number | null>(null);
   const [afterId, setAfterId] = useState<number | null>(null);
@@ -74,6 +79,11 @@ export function ProgressView() {
     () => [...filteredPhotos].reverse(),
     [filteredPhotos]
   );
+
+  const uniqueMonthsCount = useMemo(() => {
+    const months = new Set((photos ?? []).map((p) => getMonthKey(p.date)));
+    return months.size;
+  }, [photos]);
 
   const beforePhoto =
     comparePool.find((p) => p.id === beforeId) ?? comparePool[0] ?? null;
@@ -137,6 +147,16 @@ export function ProgressView() {
         <div className="flex items-center gap-2">
           <GlassButton
             type="button"
+            onClick={() => setBookOpen(true)}
+            aria-label="Abrir livro de evolução mensal"
+            className="h-10 px-3 text-xs font-medium"
+          >
+            <BookMarked className="h-4 w-4" />
+            <span>Livro</span>
+          </GlassButton>
+
+          <GlassButton
+            type="button"
             active={blurred}
             onClick={() => setBlurred((b) => !b)}
             aria-label={blurred ? "Mostrar fotos" : "Ocultar fotos"}
@@ -153,13 +173,50 @@ export function ProgressView() {
             type="button"
             active
             onClick={openAddSheet}
-            className="h-10 px-4 text-xs font-medium"
+            className="h-10 px-3.5 text-xs font-medium"
           >
             <Plus className="h-4 w-4" />
             <span>Foto</span>
           </GlassButton>
         </div>
       </header>
+
+      {/* Monthly Evolution Photo Book Banner */}
+      {(photos?.length ?? 0) > 0 && (
+        <button
+          type="button"
+          onClick={() => setBookOpen(true)}
+          className="block w-full text-left cursor-pointer"
+        >
+          <GlassCard
+            variant="frosted"
+            className="px-5 py-4 !rounded-[24px] transition-transform duration-150 active:scale-[0.985]"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5 min-w-0">
+                <div className="glass-pill-active flex h-10 w-10 shrink-0 items-center justify-center rounded-full">
+                  <BookMarked className="h-4 w-4" strokeWidth={2} />
+                </div>
+                <div className="min-w-0">
+                  <span
+                    className="block text-base font-medium text-white truncate"
+                    style={{ fontFamily: "var(--font-playfair), serif" }}
+                  >
+                    Livro de Evolução Mensal
+                  </span>
+                  <span className="block text-xs text-zinc-400 tabular-nums">
+                    {uniqueMonthsCount}{" "}
+                    {uniqueMonthsCount === 1 ? "mês registrado" : "meses registrados"} ·{" "}
+                    {photos?.length ?? 0}{" "}
+                    {(photos?.length ?? 0) === 1 ? "foto" : "fotos"}
+                  </span>
+                </div>
+              </div>
+              <ChevronRight className="h-5 w-5 shrink-0 text-zinc-400" />
+            </div>
+          </GlassCard>
+        </button>
+      )}
 
       {/* Angle Filter + Compare Toggle */}
       <div className="flex items-center justify-between gap-2">
@@ -493,6 +550,12 @@ export function ProgressView() {
           </GlassCard>
         </div>
       )}
+
+      <PhotoBookModal
+        open={bookOpen}
+        initialBlurred={blurred}
+        onClose={() => setBookOpen(false)}
+      />
     </div>
   );
 }

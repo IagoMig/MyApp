@@ -9,22 +9,31 @@ import {
   BookOpen,
   Utensils,
   Footprints,
+  Dumbbell,
+  Scale,
+  Camera,
   Settings,
   ChevronRight,
 } from "lucide-react";
 import { GlassCard, GlassButton } from "./Glass";
 import { SettingsModal } from "./SettingsModal";
+import { EvolutionChart, type EvolutionPoint } from "./EvolutionChart";
 import {
   db,
   ensureSettings,
   addWater,
   undoLastWater,
   getDateKey,
+  getIsoWeekKey,
   formatLongDatePt,
+  formatFullDatePt,
+  formatWeightKg,
+  daysBetweenDateKeys,
   DEFAULT_SETTINGS,
   type MealLog,
 } from "@/lib/db";
 import { formatKm } from "@/lib/running";
+import { mergeWorkoutsAndRuns, summarizeUnifiedWorkouts } from "@/lib/workouts";
 
 export function TodayView() {
   const [todayKey] = useState(() => getDateKey());
@@ -50,6 +59,18 @@ export function TodayView() {
   const todayRuns = useLiveQuery(
     () => db.runs.where("date").equals(todayKey).toArray(),
     [todayKey]
+  );
+  const todayWorkouts = useLiveQuery(
+    () => db.workouts.where("date").equals(todayKey).toArray(),
+    [todayKey]
+  );
+  const weightLogsAsc = useLiveQuery(
+    () => db.weightLogs.orderBy("date").toArray(),
+    []
+  );
+  const frontPhotos = useLiveQuery(
+    () => db.progressPhotos.where("angle").equals("frente").toArray(),
+    []
   );
 
   const activeSettings = settings ?? DEFAULT_SETTINGS;
@@ -80,6 +101,62 @@ export function TodayView() {
     (s, r) => s + r.caloriesBurned,
     0
   );
+
+  const todayUnifiedSummary = useMemo(() => {
+    const merged = mergeWorkoutsAndRuns(todayWorkouts ?? [], todayRuns ?? []);
+    return summarizeUnifiedWorkouts(merged);
+  }, [todayWorkouts, todayRuns]);
+
+  // Weight evolution chart data
+  const allWeightLogs = useMemo(() => weightLogsAsc ?? [], [weightLogsAsc]);
+  const currentWeekKey = useMemo(() => getIsoWeekKey(todayKey), [todayKey]);
+  const hasWeightThisWeek = useMemo(
+    () => allWeightLogs.some((l) => l.weekKey === currentWeekKey),
+    [allWeightLogs, currentWeekKey]
+  );
+
+  const latestWeight =
+    allWeightLogs.length > 0
+      ? allWeightLogs[allWeightLogs.length - 1].weightKg
+      : activeSettings.weightKg;
+  const startWeight =
+    activeSettings.startWeightKg ??
+    (allWeightLogs.length > 0 ? allWeightLogs[0].weightKg : latestWeight);
+  const goalWeight =
+    activeSettings.weightGoalKg ??
+    Math.max(40, Number((latestWeight - 5).toFixed(1)));
+  const totalWeightDelta = Number((latestWeight - startWeight).toFixed(1));
+
+  const homeChartPoints: EvolutionPoint[] = useMemo(
+    () =>
+      allWeightLogs.slice(-10).map((l) => ({
+        id: l.id ?? l.date,
+        date: l.date,
+        weightKg: l.weightKg,
+      })),
+    [allWeightLogs]
+  );
+
+  // First & Last frontal photos only
+  const { firstFront, lastFront, frontSpanDays } = useMemo(() => {
+    const sorted = [...(frontPhotos ?? [])].sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      return a.createdAt - b.createdAt;
+    });
+    if (sorted.length === 0) {
+      return { firstFront: null, lastFront: null, frontSpanDays: 0 };
+    }
+    if (sorted.length === 1) {
+      return { firstFront: sorted[0], lastFront: null, frontSpanDays: 0 };
+    }
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    return {
+      firstFront: first,
+      lastFront: last,
+      frontSpanDays: Math.max(0, daysBetweenDateKeys(first.date, last.date)),
+    };
+  }, [frontPhotos]);
 
   const formattedLiters = (totalWaterMl / 1000).toFixed(2).replace(".", ",");
   const formattedGoal = (activeSettings.waterGoalMl / 1000)
@@ -163,6 +240,51 @@ export function TodayView() {
         </div>
       </GlassCard>
 
+      {/* Weight Evolution Chart Card */}
+      <Link href="/peso" className="block">
+        <GlassCard className="p-5 space-y-4 transition-transform duration-150 active:scale-[0.985]">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="glass-pill flex h-9 w-9 shrink-0 items-center justify-center rounded-full">
+                <Scale className="h-4 w-4 text-white" strokeWidth={1.8} />
+              </div>
+              <div className="min-w-0">
+                <span className="block text-base font-medium text-white">
+                  Evolução de peso
+                </span>
+                <span className="block text-xs text-zinc-400 tabular-nums truncate">
+                  {formatWeightKg(latestWeight)} kg · Meta{" "}
+                  {formatWeightKg(goalWeight)} kg
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {!hasWeightThisWeek ? (
+                <span className="glass-pill-active rounded-full px-2.5 py-1 text-[10px] font-medium">
+                  Pesar semana
+                </span>
+              ) : (
+                allWeightLogs.length >= 2 && (
+                  <span className="glass-pill rounded-full px-2.5 py-1 text-[11px] text-zinc-200 tabular-nums">
+                    {totalWeightDelta > 0 ? "+" : ""}
+                    {formatWeightKg(totalWeightDelta)} kg
+                  </span>
+                )
+              )}
+              <ChevronRight className="h-5 w-5 text-zinc-500" />
+            </div>
+          </div>
+
+          <EvolutionChart
+            points={homeChartPoints}
+            goalKg={goalWeight}
+            compact
+            interactive={false}
+          />
+        </GlassCard>
+      </Link>
+
       {/* Diary Shortcut Card */}
       <Link href="/diario" className="block">
         <GlassCard className="p-6 transition-transform duration-150 active:scale-[0.985]">
@@ -228,23 +350,149 @@ export function TodayView() {
         </GlassCard>
       </Link>
 
-      {/* Run Card */}
-      <Link href="/corrida" className="block">
-        <GlassCard className="p-6 transition-transform duration-150 active:scale-[0.985]">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3.5">
-              <div className="glass-pill flex h-10 w-10 items-center justify-center rounded-full">
+      {/* Treino & Corrida Quick Row */}
+      <div className="grid grid-cols-2 gap-3">
+        <Link href="/treino" className="block">
+          <GlassCard className="h-full p-5 space-y-3 transition-transform duration-150 active:scale-[0.98]">
+            <div className="flex items-center justify-between">
+              <div className="glass-pill flex h-9 w-9 items-center justify-center rounded-full">
+                <Dumbbell className="h-4 w-4 text-white" strokeWidth={1.8} />
+              </div>
+              <ChevronRight className="h-4 w-4 text-zinc-500" />
+            </div>
+            <div>
+              <span className="block text-base font-medium text-white">
+                Treino
+              </span>
+              <span className="block text-xs text-zinc-400 tabular-nums mt-0.5 truncate">
+                {todayUnifiedSummary.totalSessions > 0
+                  ? `${todayUnifiedSummary.totalSessions} ${todayUnifiedSummary.totalSessions === 1 ? "sessão" : "sessões"} · ${todayUnifiedSummary.totalCalories} kcal`
+                  : "Registrar hoje"}
+              </span>
+            </div>
+          </GlassCard>
+        </Link>
+
+        <Link href="/corrida" className="block">
+          <GlassCard className="h-full p-5 space-y-3 transition-transform duration-150 active:scale-[0.98]">
+            <div className="flex items-center justify-between">
+              <div className="glass-pill flex h-9 w-9 items-center justify-center rounded-full">
                 <Footprints className="h-4 w-4 text-white" strokeWidth={1.8} />
               </div>
-              <span className="text-base font-medium text-white">Corrida</span>
+              <ChevronRight className="h-4 w-4 text-zinc-500" />
             </div>
-            <div className="flex items-center gap-2">
-              {totalRunKmToday > 0 && (
-                <span className="text-sm text-zinc-300 tabular-nums">
-                  {formatKm(totalRunKmToday)} km · {totalRunKcalToday} kcal
+            <div>
+              <span className="block text-base font-medium text-white">
+                Corrida
+              </span>
+              <span className="block text-xs text-zinc-400 tabular-nums mt-0.5 truncate">
+                {totalRunKmToday > 0
+                  ? `${formatKm(totalRunKmToday)} km · ${totalRunKcalToday} kcal`
+                  : "Iniciar GPS"}
+              </span>
+            </div>
+          </GlassCard>
+        </Link>
+      </div>
+
+      {/* LAST CARD: First vs Last Frontal Evolution Photo */}
+      <Link href="/evolucao" className="block">
+        <GlassCard className="p-5 space-y-4 transition-transform duration-150 active:scale-[0.985]">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="glass-pill flex h-9 w-9 items-center justify-center rounded-full">
+                <Camera className="h-4 w-4 text-white" strokeWidth={1.8} />
+              </div>
+              <div>
+                <span className="block text-base font-medium text-white">
+                  Antes &amp; Depois
                 </span>
-              )}
-              <ChevronRight className="h-5 w-5 text-zinc-500" />
+                <span className="block text-xs text-zinc-400">
+                  Frontal
+                  {frontSpanDays > 0 ? ` · ${frontSpanDays} dias de evolução` : ""}
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="h-5 w-5 text-zinc-500" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {/* First Frontal Photo */}
+            <div className="glass-obsidian overflow-hidden rounded-[22px] p-1.5">
+              <div className="relative aspect-[3/4] w-full overflow-hidden rounded-[17px] bg-zinc-950">
+                {firstFront ? (
+                  <>
+                    <img
+                      src={firstFront.dataUrl}
+                      alt={`Primeira foto frontal ${firstFront.date}`}
+                      className="h-full w-full object-cover"
+                    />
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/45 to-transparent px-3 pt-8 pb-2.5">
+                      <span className="block text-[10px] uppercase tracking-[0.14em] text-zinc-300">
+                        Primeira
+                      </span>
+                      <span className="block text-xs font-medium text-white">
+                        {formatFullDatePt(firstFront.date)}
+                      </span>
+                      {firstFront.weightKg ? (
+                        <span className="block text-[10px] text-zinc-400 tabular-nums">
+                          {formatWeightKg(firstFront.weightKg)} kg
+                        </span>
+                      ) : null}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+                    <Camera className="h-5 w-5 text-zinc-500" strokeWidth={1.6} />
+                    <span className="text-[11px] font-medium text-zinc-300">
+                      Primeira frontal
+                    </span>
+                    <span className="text-[10px] text-zinc-500">
+                      Toque para adicionar
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Last Frontal Photo */}
+            <div className="glass-obsidian overflow-hidden rounded-[22px] p-1.5">
+              <div className="relative aspect-[3/4] w-full overflow-hidden rounded-[17px] bg-zinc-950">
+                {lastFront ? (
+                  <>
+                    <img
+                      src={lastFront.dataUrl}
+                      alt={`Última foto frontal ${lastFront.date}`}
+                      className="h-full w-full object-cover"
+                    />
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/45 to-transparent px-3 pt-8 pb-2.5">
+                      <span className="block text-[10px] uppercase tracking-[0.14em] text-zinc-300">
+                        Última
+                      </span>
+                      <span className="block text-xs font-medium text-white">
+                        {formatFullDatePt(lastFront.date)}
+                      </span>
+                      {lastFront.weightKg ? (
+                        <span className="block text-[10px] text-zinc-400 tabular-nums">
+                          {formatWeightKg(lastFront.weightKg)} kg
+                        </span>
+                      ) : null}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+                    <Camera className="h-5 w-5 text-zinc-500" strokeWidth={1.6} />
+                    <span className="text-[11px] font-medium text-zinc-300">
+                      Última frontal
+                    </span>
+                    <span className="text-[10px] text-zinc-500">
+                      {firstFront
+                        ? "Adicione outra foto frontal"
+                        : "Comparativo automático"}
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </GlassCard>

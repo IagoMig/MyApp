@@ -11,6 +11,8 @@ export interface UserSettings {
   waterGoalMl: number;
   calorieGoal: number;
   weightKg: number;
+  weightGoalKg?: number;
+  startWeightKg?: number;
   mealSlots: string[];
   updatedAt: number;
 }
@@ -93,9 +95,51 @@ export interface ProgressPhoto {
 }
 
 export interface MonthlyBookMeta {
-  monthKey: string; // YYYY-MM
+  monthKey: string; // YYYY-MM or prefixed key (photos:..., workouts:...)
   customTitle: string;
   updatedAt: number;
+}
+
+export interface WeightLog {
+  id?: number;
+  date: string; // YYYY-MM-DD
+  weekKey: string; // YYYY-Www (ISO week)
+  monthKey: string; // YYYY-MM
+  weightKg: number;
+  note?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type WorkoutCategoryId =
+  | "musculacao"
+  | "muay_thai"
+  | "jiu_jitsu"
+  | "boxe"
+  | "hiit"
+  | "funcional"
+  | "crossfit"
+  | "ciclismo"
+  | "natacao"
+  | "futebol"
+  | "caminhada"
+  | "yoga"
+  | "outro";
+
+export type WorkoutIntensity = "leve" | "moderado" | "intenso";
+
+export interface WorkoutSession {
+  id?: number;
+  date: string; // YYYY-MM-DD
+  weekKey: string; // YYYY-Www
+  monthKey: string; // YYYY-MM
+  category: WorkoutCategoryId;
+  name: string;
+  durationMin: number;
+  intensity: WorkoutIntensity;
+  caloriesBurned: number;
+  notes?: string;
+  createdAt: number;
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -103,6 +147,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   waterGoalMl: 3000,
   calorieGoal: 2200,
   weightKg: 75,
+  weightGoalKg: 70,
+  startWeightKg: undefined,
   mealSlots: ["Café", "Almoço", "Lanche", "Jantar"],
   updatedAt: 0,
 };
@@ -116,6 +162,8 @@ class MyAppDatabase extends Dexie {
   runs!: EntityTable<RunSession, "id">;
   progressPhotos!: EntityTable<ProgressPhoto, "id">;
   bookMeta!: EntityTable<MonthlyBookMeta, "monthKey">;
+  weightLogs!: EntityTable<WeightLog, "id">;
+  workouts!: EntityTable<WorkoutSession, "id">;
 
   constructor() {
     super("MyAppLocalDB");
@@ -136,6 +184,19 @@ class MyAppDatabase extends Dexie {
       progressPhotos: "++id, date, angle, createdAt",
       bookMeta: "monthKey",
     });
+
+    this.version(3).stores({
+      settings: "id",
+      waterLogs: "++id, date, createdAt",
+      diaryEntries: "date, monthKey, updatedAt",
+      mealLogs: "id, date, [date+slotIndex]",
+      customFoods: "++id, name",
+      runs: "++id, date, monthKey, startedAt",
+      progressPhotos: "++id, date, angle, createdAt",
+      bookMeta: "monthKey",
+      weightLogs: "++id, date, weekKey, monthKey, createdAt",
+      workouts: "++id, date, weekKey, monthKey, category, createdAt",
+    });
   }
 }
 
@@ -143,7 +204,17 @@ export const db = new MyAppDatabase();
 
 export async function ensureSettings(): Promise<UserSettings> {
   const existing = await db.settings.get("user");
-  if (existing) return existing;
+  if (existing) {
+    if (existing.weightGoalKg === undefined) {
+      const patched: UserSettings = {
+        ...existing,
+        weightGoalKg: Math.max(40, Number((existing.weightKg - 5).toFixed(1))),
+      };
+      await db.settings.put(patched);
+      return patched;
+    }
+    return existing;
+  }
   const created: UserSettings = {
     ...DEFAULT_SETTINGS,
     updatedAt: Date.now(),
@@ -206,6 +277,60 @@ export async function saveMealLog(
   });
 }
 
+export async function saveWeeklyWeight(data: {
+  date: string;
+  weightKg: number;
+  note?: string;
+}): Promise<void> {
+  const cleanWeight = Number(data.weightKg.toFixed(1));
+  const weekKey = getIsoWeekKey(data.date);
+  const monthKey = getMonthKey(data.date);
+  const now = Date.now();
+
+  const existing = await db.weightLogs.where("weekKey").equals(weekKey).first();
+  if (existing?.id !== undefined) {
+    await db.weightLogs.put({
+      ...existing,
+      date: data.date,
+      weekKey,
+      monthKey,
+      weightKg: cleanWeight,
+      note: data.note?.trim() || undefined,
+      updatedAt: now,
+    });
+  } else {
+    await db.weightLogs.add({
+      date: data.date,
+      weekKey,
+      monthKey,
+      weightKg: cleanWeight,
+      note: data.note?.trim() || undefined,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  const allLogs = await db.weightLogs.orderBy("date").toArray();
+  if (allLogs.length > 0) {
+    const latest = allLogs[allLogs.length - 1];
+    const earliest = allLogs[0];
+    const currentSettings = await ensureSettings();
+    await updateSettings({
+      weightKg: latest.weightKg,
+      startWeightKg: currentSettings.startWeightKg ?? earliest.weightKg,
+    });
+  }
+}
+
+export async function deleteWeightLog(id: number): Promise<void> {
+  await db.weightLogs.delete(id);
+  const allLogs = await db.weightLogs.orderBy("date").toArray();
+  if (allLogs.length > 0) {
+    const latest = allLogs[allLogs.length - 1];
+    await updateSettings({ weightKg: latest.weightKg });
+  }
+}
+
 export interface FullBackupPayload {
   version: number;
   exportedAt: string;
@@ -217,6 +342,8 @@ export interface FullBackupPayload {
   runs: RunSession[];
   progressPhotos: ProgressPhoto[];
   bookMeta: MonthlyBookMeta[];
+  weightLogs?: WeightLog[];
+  workouts?: WorkoutSession[];
 }
 
 export async function exportAllData(): Promise<FullBackupPayload> {
@@ -229,6 +356,8 @@ export async function exportAllData(): Promise<FullBackupPayload> {
     runs,
     progressPhotos,
     bookMeta,
+    weightLogs,
+    workouts,
   ] = await Promise.all([
     db.settings.toArray(),
     db.waterLogs.toArray(),
@@ -238,10 +367,12 @@ export async function exportAllData(): Promise<FullBackupPayload> {
     db.runs.toArray(),
     db.progressPhotos.toArray(),
     db.bookMeta.toArray(),
+    db.weightLogs.toArray(),
+    db.workouts.toArray(),
   ]);
 
   return {
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     settings,
     waterLogs,
@@ -251,6 +382,8 @@ export async function exportAllData(): Promise<FullBackupPayload> {
     runs,
     progressPhotos,
     bookMeta,
+    weightLogs,
+    workouts,
   };
 }
 
@@ -270,6 +403,8 @@ export async function importAllData(payload: FullBackupPayload): Promise<void> {
       db.runs,
       db.progressPhotos,
       db.bookMeta,
+      db.weightLogs,
+      db.workouts,
     ],
     async () => {
       if (payload.settings?.length) {
@@ -304,6 +439,14 @@ export async function importAllData(payload: FullBackupPayload): Promise<void> {
         await db.bookMeta.clear();
         await db.bookMeta.bulkPut(payload.bookMeta);
       }
+      if (Array.isArray(payload.weightLogs)) {
+        await db.weightLogs.clear();
+        await db.weightLogs.bulkPut(payload.weightLogs);
+      }
+      if (Array.isArray(payload.workouts)) {
+        await db.workouts.clear();
+        await db.workouts.bulkPut(payload.workouts);
+      }
     }
   );
 }
@@ -334,6 +477,69 @@ export function shiftMonthKey(monthKey: string, deltaMonths: number): string {
 
 export function getMonthKey(dateKey: string): string {
   return dateKey.slice(0, 7);
+}
+
+/** ISO-8601 week key (Monday–Sunday), e.g. "2026-W48" */
+export function getIsoWeekKey(dateKey: string): string {
+  const d = parseDateKey(dateKey);
+  const utc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = utc.getUTCDay() || 7; // Mon=1 .. Sun=7
+  utc.setUTCDate(utc.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil(((utc.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return `${utc.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+}
+
+export function getWeekBounds(dateKey: string): {
+  startDate: string;
+  endDate: string;
+  weekKey: string;
+  days: string[];
+} {
+  const dt = parseDateKey(dateKey);
+  const day = dt.getDay(); // Sun=0, Mon=1..Sat=6
+  const diffToMon = day === 0 ? -6 : 1 - day;
+  const mon = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() + diffToMon);
+  const days: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const cur = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + i);
+    days.push(getDateKey(cur));
+  }
+  return {
+    startDate: days[0],
+    endDate: days[6],
+    weekKey: getIsoWeekKey(days[0]),
+    days,
+  };
+}
+
+export function shiftWeekDateKey(dateKey: string, deltaWeeks: number): string {
+  return shiftDateKey(dateKey, deltaWeeks * 7);
+}
+
+export function formatWeekRangePt(startDate: string, endDate: string): string {
+  return `${formatShortDatePt(startDate)} – ${formatShortDatePt(endDate)}`;
+}
+
+export function formatFullDatePt(dateKey: string): string {
+  const dt = parseDateKey(dateKey);
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  })
+    .format(dt)
+    .replace(/\./g, "");
+}
+
+export function formatWeightKg(kg: number): string {
+  return kg.toFixed(1).replace(".", ",");
+}
+
+export function daysBetweenDateKeys(a: string, b: string): number {
+  const da = parseDateKey(a).getTime();
+  const dbTime = parseDateKey(b).getTime();
+  return Math.round((dbTime - da) / 86400000);
 }
 
 export function formatLongDatePt(dateKey: string): string {

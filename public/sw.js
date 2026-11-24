@@ -1,9 +1,11 @@
-const CACHE_NAME = "my-app-shell-v2";
+const CACHE_NAME = "my-app-shell-v3";
 const CORE_ASSETS = [
   "/",
   "/diario",
   "/alimentacao",
+  "/treino",
   "/corrida",
+  "/peso",
   "/evolucao",
   "/manifest.webmanifest",
   "/icons/icon-192.png",

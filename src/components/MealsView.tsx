@@ -55,6 +55,10 @@ export function MealsView() {
     () => db.runs.where("date").equals(selectedDate).toArray(),
     [selectedDate]
   );
+  const dayWorkouts = useLiveQuery(
+    () => db.workouts.where("date").equals(selectedDate).toArray(),
+    [selectedDate]
+  );
 
   const activeSettings = settings ?? DEFAULT_SETTINGS;
   const slots = activeSettings.mealSlots.slice(0, 4);
@@ -71,10 +75,9 @@ export function MealsView() {
     (sum, m) => sum + (m.isFasting ? 0 : m.totalKcal),
     0
   );
-  const burnedToday = (dayRuns ?? []).reduce(
-    (sum, r) => sum + r.caloriesBurned,
-    0
-  );
+  const burnedToday =
+    (dayRuns ?? []).reduce((sum, r) => sum + r.caloriesBurned, 0) +
+    (dayWorkouts ?? []).reduce((sum, w) => sum + w.caloriesBurned, 0);
   const effectiveGoal = activeSettings.calorieGoal + burnedToday;
   const pct = Math.min(
     100,

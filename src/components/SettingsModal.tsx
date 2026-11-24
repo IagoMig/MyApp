@@ -24,6 +24,9 @@ export function SettingsModal({ open, onClose, settings }: SettingsModalProps) {
   const [waterGoalMl, setWaterGoalMl] = useState(current.waterGoalMl);
   const [calorieGoal, setCalorieGoal] = useState(current.calorieGoal);
   const [weightKg, setWeightKg] = useState(current.weightKg);
+  const [weightGoalKg, setWeightGoalKg] = useState(
+    current.weightGoalKg ?? Math.max(40, Number((current.weightKg - 5).toFixed(1)))
+  );
   const [mealSlots, setMealSlots] = useState<string[]>(current.mealSlots);
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -33,6 +36,10 @@ export function SettingsModal({ open, onClose, settings }: SettingsModalProps) {
       setWaterGoalMl(settings.waterGoalMl);
       setCalorieGoal(settings.calorieGoal);
       setWeightKg(settings.weightKg);
+      setWeightGoalKg(
+        settings.weightGoalKg ??
+          Math.max(40, Number((settings.weightKg - 5).toFixed(1)))
+      );
       setMealSlots(settings.mealSlots);
     }
     setBackupStatus(null);
@@ -45,6 +52,7 @@ export function SettingsModal({ open, onClose, settings }: SettingsModalProps) {
       waterGoalMl,
       calorieGoal,
       weightKg,
+      weightGoalKg,
       mealSlots: mealSlots.map((s, i) => s.trim() || `Refeição ${i + 1}`),
     });
     onClose();
@@ -162,17 +170,44 @@ export function SettingsModal({ open, onClose, settings }: SettingsModalProps) {
               <GlassButton
                 type="button"
                 className="h-8 w-8 !rounded-full p-0"
-                onClick={() => setWeightKg((v) => Math.max(35, v - 1))}
+                onClick={() => setWeightKg((v) => Math.max(35, Number((v - 0.5).toFixed(1))))}
               >
                 <Minus className="h-3.5 w-3.5" />
               </GlassButton>
-              <span className="w-14 text-center text-sm font-medium text-white tabular-nums">
-                {weightKg} kg
+              <span className="w-16 text-center text-sm font-medium text-white tabular-nums">
+                {weightKg.toFixed(1).replace(".", ",")} kg
               </span>
               <GlassButton
                 type="button"
                 className="h-8 w-8 !rounded-full p-0"
-                onClick={() => setWeightKg((v) => Math.min(200, v + 1))}
+                onClick={() => setWeightKg((v) => Math.min(200, Number((v + 0.5).toFixed(1))))}
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </GlassButton>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3.5">
+            <span className="text-sm text-zinc-300">Meta de peso</span>
+            <div className="flex items-center gap-3">
+              <GlassButton
+                type="button"
+                className="h-8 w-8 !rounded-full p-0"
+                onClick={() =>
+                  setWeightGoalKg((v) => Math.max(35, Number((v - 0.5).toFixed(1))))
+                }
+              >
+                <Minus className="h-3.5 w-3.5" />
+              </GlassButton>
+              <span className="w-16 text-center text-sm font-medium text-white tabular-nums">
+                {weightGoalKg.toFixed(1).replace(".", ",")} kg
+              </span>
+              <GlassButton
+                type="button"
+                className="h-8 w-8 !rounded-full p-0"
+                onClick={() =>
+                  setWeightGoalKg((v) => Math.min(200, Number((v + 0.5).toFixed(1))))
+                }
               >
                 <Plus className="h-3.5 w-3.5" />
               </GlassButton>
