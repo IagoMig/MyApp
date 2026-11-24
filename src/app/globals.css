@@ -1,0 +1,295 @@
+@import "tailwindcss";
+
+:root {
+  --bg-pure: #000000;
+  --glass-bg: rgba(255, 255, 255, 0.055);
+  --glass-bg-hover: rgba(255, 255, 255, 0.095);
+  --glass-border: rgba(255, 255, 255, 0.13);
+  --glass-border-strong: rgba(255, 255, 255, 0.22);
+  --glass-highlight: rgba(255, 255, 255, 0.2);
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  background-color: #000000;
+  color: #ffffff;
+  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, sans-serif;
+  overscroll-behavior-y: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100dvh;
+}
+
+/* Monochrome ambient light-catchers so absolute glassmorphism shows true refraction */
+.obsidian-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: #000000;
+  overflow: hidden;
+}
+
+.obsidian-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  pointer-events: none;
+}
+
+.obsidian-orb-1 {
+  top: -12%;
+  left: -18%;
+  width: 340px;
+  height: 340px;
+  background: radial-gradient(
+    circle,
+    rgba(255, 255, 255, 0.14) 0%,
+    rgba(160, 160, 170, 0.05) 45%,
+    transparent 72%
+  );
+}
+
+.obsidian-orb-2 {
+  top: 38%;
+  right: -22%;
+  width: 320px;
+  height: 320px;
+  background: radial-gradient(
+    circle,
+    rgba(220, 220, 230, 0.11) 0%,
+    rgba(130, 130, 140, 0.04) 50%,
+    transparent 75%
+  );
+}
+
+.obsidian-orb-3 {
+  bottom: -14%;
+  left: 12%;
+  width: 380px;
+  height: 300px;
+  background: radial-gradient(
+    circle,
+    rgba(255, 255, 255, 0.09) 0%,
+    rgba(140, 140, 150, 0.03) 55%,
+    transparent 78%
+  );
+}
+
+.obsidian-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(ellipse at 50% 30%, black 20%, transparent 78%);
+  opacity: 0.45;
+}
+
+/* Absolute Glassmorphism Surface Hierarchy */
+.glass-surface {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.09) 0%,
+    rgba(255, 255, 255, 0.025) 52%,
+    rgba(255, 255, 255, 0.055) 100%
+  );
+  backdrop-filter: blur(28px) saturate(135%);
+  -webkit-backdrop-filter: blur(28px) saturate(135%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 0 rgba(255, 255, 255, 0.04),
+    0 20px 48px -18px rgba(0, 0, 0, 0.9);
+}
+
+.glass-frosted {
+  background: linear-gradient(
+    155deg,
+    rgba(255, 255, 255, 0.14) 0%,
+    rgba(255, 255, 255, 0.05) 55%,
+    rgba(255, 255, 255, 0.085) 100%
+  );
+  backdrop-filter: blur(36px) saturate(150%);
+  -webkit-backdrop-filter: blur(36px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.19);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 0 rgba(255, 255, 255, 0.05),
+    0 24px 56px -16px rgba(0, 0, 0, 0.92);
+}
+
+.glass-obsidian {
+  background: linear-gradient(
+    155deg,
+    rgba(255, 255, 255, 0.045) 0%,
+    rgba(10, 10, 12, 0.65) 55%,
+    rgba(255, 255, 255, 0.025) 100%
+  );
+  backdrop-filter: blur(32px);
+  -webkit-backdrop-filter: blur(32px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.14),
+    0 20px 48px -18px rgba(0, 0, 0, 0.95);
+}
+
+.glass-lined {
+  background-color: rgba(255, 255, 255, 0.05);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 31px,
+    rgba(255, 255, 255, 0.075) 31px,
+    rgba(255, 255, 255, 0.075) 32px
+  );
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.2),
+    0 20px 48px -18px rgba(0, 0, 0, 0.9);
+}
+
+.glass-pill {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.11) 0%,
+    rgba(255, 255, 255, 0.035) 100%
+  );
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+}
+
+.glass-pill:hover {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.17) 0%,
+    rgba(255, 255, 255, 0.065) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.glass-pill-active {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.94) 0%,
+    rgba(228, 228, 232, 0.86) 100%
+  );
+  color: #000000;
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    0 8px 24px -6px rgba(255, 255, 255, 0.28),
+    inset 0 1px 0 0 rgba(255, 255, 255, 1);
+}
+
+.glass-dock {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(20, 20, 22, 0.62) 100%
+  );
+  backdrop-filter: blur(36px) saturate(160%);
+  -webkit-backdrop-filter: blur(36px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.17);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.28),
+    0 18px 42px -10px rgba(0, 0, 0, 0.95);
+}
+
+/* Safe area helpers for iPhone Home Screen PWA */
+.safe-top {
+  padding-top: max(18px, env(safe-area-inset-top));
+}
+
+.safe-bottom-pad {
+  padding-bottom: calc(108px + env(safe-area-inset-bottom));
+}
+
+.safe-dock-bottom {
+  bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+/* Rich Diary Editor formatting styles */
+.diary-editor {
+  outline: none;
+  min-height: 300px;
+  line-height: 1.75;
+  word-break: break-word;
+}
+
+.diary-editor:empty::before {
+  content: attr(data-placeholder);
+  color: rgba(255, 255, 255, 0.26);
+  pointer-events: none;
+}
+
+.diary-editor h2 {
+  font-size: 1.35em;
+  font-weight: 600;
+  margin: 0.75em 0 0.35em;
+  letter-spacing: -0.02em;
+}
+
+.diary-editor blockquote {
+  border-left: 2px solid rgba(255, 255, 255, 0.35);
+  padding-left: 14px;
+  margin: 0.75em 0;
+  opacity: 0.85;
+  font-style: italic;
+}
+
+.diary-editor ul {
+  list-style-type: disc;
+  padding-left: 22px;
+  margin: 0.5em 0;
+}
+
+.diary-editor ol {
+  list-style-type: decimal;
+  padding-left: 22px;
+  margin: 0.5em 0;
+}
+
+.diary-editor hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+  margin: 1.1em 0;
+}
+
+/* Hide scrollbars while keeping touch scrolling fluid */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Monochrome Obsidian Dark Filter for OpenStreetMap Leaflet tiles (zero API key, zero watermarks) */
+.obsidian-leaflet .leaflet-tile-pane {
+  filter: grayscale(100%) invert(94%) contrast(108%) brightness(82%);
+}
+
+.obsidian-leaflet .leaflet-container {
+  background: #0a0a0c;
+}
+
+.obsidian-leaflet .leaflet-control-attribution {
+  background: rgba(0, 0, 0, 0.55) !important;
+  color: rgba(255, 255, 255, 0.35) !important;
+  font-size: 9px !important;
+  backdrop-filter: blur(8px);
+  border-top-left-radius: 10px;
+}
+
+.obsidian-leaflet .leaflet-control-attribution a {
+  color: rgba(255, 255, 255, 0.45) !important;
+}
