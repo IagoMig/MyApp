@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { GlassCard, GlassButton } from "./Glass";
 import { EvolutionChart, type EvolutionPoint } from "./EvolutionChart";
+import { PeriodFilterBar } from "./PeriodFilterBar";
 import {
   db,
   DEFAULT_SETTINGS,
@@ -33,12 +34,24 @@ import {
   daysBetweenDateKeys,
   type WeightLog,
 } from "@/lib/db";
+import {
+  isDateInPeriod,
+  resolvePeriodRange,
+  type PeriodMode,
+} from "@/lib/period";
 
-type ChartRange = "4w" | "12w" | "all";
+type ChartRange = "period" | "12w" | "all";
 
 export function WeightView() {
   const [todayKey] = useState(() => getDateKey());
-  const [range, setRange] = useState<ChartRange>("12w");
+  const [periodMode, setPeriodMode] = useState<PeriodMode>("monthly");
+  const [anchorDate, setAnchorDate] = useState(() => getDateKey());
+  const [range, setRange] = useState<ChartRange>("period");
+
+  const activePeriod = useMemo(
+    () => resolvePeriodRange(periodMode, anchorDate, todayKey),
+    [periodMode, anchorDate, todayKey]
+  );
 
   // Weight modal
   const [logOpen, setLogOpen] = useState(false);
@@ -123,11 +136,16 @@ export function WeightView() {
     return { avgWeeklyDelta: avg, estimatedWeeksLeft: forecast };
   }, [allLogs, goalReached, isLosingGoal, currentWeight, goalWeight]);
 
+  const periodFilteredLogs = useMemo(
+    () => allLogs.filter((l) => isDateInPeriod(l.date, activePeriod)),
+    [allLogs, activePeriod]
+  );
+
   // Filtered chart points
   const chartPoints: EvolutionPoint[] = useMemo(() => {
     const slice =
-      range === "4w"
-        ? allLogs.slice(-4)
+      range === "period"
+        ? periodFilteredLogs
         : range === "12w"
           ? allLogs.slice(-12)
           : allLogs;
@@ -137,9 +155,9 @@ export function WeightView() {
       weightKg: l.weightKg,
       note: l.note,
     }));
-  }, [allLogs, range]);
+  }, [allLogs, periodFilteredLogs, range]);
 
-  // Reverse list with deltas for history display
+  // Reverse list with deltas filtered to active period
   const historyRows = useMemo(() => {
     return allLogs
       .map((log, idx) => {
@@ -149,8 +167,9 @@ export function WeightView() {
           : null;
         return { log, delta };
       })
+      .filter(({ log }) => isDateInPeriod(log.date, activePeriod))
       .reverse();
-  }, [allLogs]);
+  }, [allLogs, activePeriod]);
 
   const openLogModal = (existing?: WeightLog | null) => {
     if (existing) {
@@ -159,7 +178,7 @@ export function WeightView() {
       setInputNote(existing.note ?? "");
     } else {
       setInputWeight(currentWeight.toFixed(1));
-      setInputDate(todayKey);
+      setInputDate(activePeriod.isSingleDay ? activePeriod.startDate : todayKey);
       setInputNote("");
     }
     setLogOpen(true);
@@ -255,6 +274,22 @@ export function WeightView() {
           </GlassButton>
         </div>
       </header>
+
+      {/* Unified Temporal Filter: Diário | Dia anterior | Semanal | Mensal */}
+      <PeriodFilterBar
+        mode={periodMode}
+        anchorDate={anchorDate}
+        onChangeMode={(m) => {
+          setPeriodMode(m);
+          setRange("period");
+        }}
+        onChangeAnchor={(d) => {
+          setAnchorDate(d);
+          setRange("period");
+        }}
+        todayKey={todayKey}
+        allowDatePicker
+      />
 
       {/* Weekly Check-in + Goal Hero Card */}
       <GlassCard variant="frosted" className="p-6 space-y-5">
@@ -356,7 +391,7 @@ export function WeightView() {
           <div className="flex items-center gap-1">
             {(
               [
-                { id: "4w", label: "4 sem" },
+                { id: "period", label: "Filtro" },
                 { id: "12w", label: "3 m" },
                 { id: "all", label: "Tudo" },
               ] as const
@@ -429,17 +464,20 @@ export function WeightView() {
       <div className="space-y-2.5">
         <div className="flex items-center justify-between px-1">
           <span className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-400">
-            Histórico semanal
+            Histórico · {activePeriod.shortLabel}
           </span>
           <span className="text-xs text-zinc-500 tabular-nums">
-            {allLogs.length} {allLogs.length === 1 ? "registro" : "registros"}
+            {historyRows.length}{" "}
+            {historyRows.length === 1 ? "registro" : "registros"}
           </span>
         </div>
 
         {historyRows.length === 0 ? (
           <GlassCard className="p-7 text-center space-y-3">
             <p className="text-sm text-zinc-300">
-              Registre sua primeira pesagem semanal para acompanhar sua evolução.
+              {allLogs.length > 0
+                ? `Nenhuma pesagem registrada em ${activePeriod.label}.`
+                : "Registre sua primeira pesagem semanal para acompanhar sua evolução."}
             </p>
             <GlassButton
               type="button"
@@ -448,7 +486,11 @@ export function WeightView() {
               className="px-5 py-2.5 text-xs font-medium"
             >
               <Plus className="h-3.5 w-3.5" />
-              <span>Registrar peso inicial</span>
+              <span>
+                {allLogs.length > 0
+                  ? "Registrar peso"
+                  : "Registrar peso inicial"}
+              </span>
             </GlassButton>
           </GlassCard>
         ) : (

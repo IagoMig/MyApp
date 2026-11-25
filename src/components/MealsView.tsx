@@ -3,8 +3,6 @@
 import { useState, useMemo } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
-  ChevronLeft,
-  ChevronRight,
   Utensils,
   Moon,
   Plus,
@@ -13,8 +11,10 @@ import {
   Search,
   Sparkles,
   Trash2,
+  ChevronRight,
 } from "lucide-react";
 import { GlassCard, GlassButton } from "./Glass";
+import { PeriodFilterBar } from "./PeriodFilterBar";
 import {
   db,
   DEFAULT_SETTINGS,
@@ -25,6 +25,7 @@ import {
   type MealItem,
   type MealLog,
 } from "@/lib/db";
+import { resolvePeriodRange, type PeriodMode } from "@/lib/period";
 import {
   searchFoods,
   computeKcal,
@@ -34,8 +35,16 @@ import {
 
 export function MealsView() {
   const [todayKey] = useState(() => getDateKey());
-  const [selectedDate, setSelectedDate] = useState(() => getDateKey());
+  const yesterdayKey = useMemo(() => shiftDateKey(todayKey, -1), [todayKey]);
+  const [periodMode, setPeriodMode] = useState<PeriodMode>("daily");
+  const [anchorDate, setAnchorDate] = useState(() => getDateKey());
   const [activeSlot, setActiveSlot] = useState<number | null>(null);
+
+  const range = useMemo(
+    () => resolvePeriodRange(periodMode, anchorDate, todayKey),
+    [periodMode, anchorDate, todayKey]
+  );
+  const selectedDate = range.startDate;
 
   // Sheet states
   const [query, setQuery] = useState("");
@@ -47,17 +56,29 @@ export function MealsView() {
 
   const settings = useLiveQuery(() => db.settings.get("user"), []);
   const customFoods = useLiveQuery(() => db.customFoods.toArray(), []);
-  const dayMeals = useLiveQuery(
-    () => db.mealLogs.where("date").equals(selectedDate).toArray(),
-    [selectedDate]
+  const periodMeals = useLiveQuery(
+    () =>
+      db.mealLogs
+        .where("date")
+        .between(range.startDate, range.endDate, true, true)
+        .toArray(),
+    [range.startDate, range.endDate]
   );
-  const dayRuns = useLiveQuery(
-    () => db.runs.where("date").equals(selectedDate).toArray(),
-    [selectedDate]
+  const periodRuns = useLiveQuery(
+    () =>
+      db.runs
+        .where("date")
+        .between(range.startDate, range.endDate, true, true)
+        .toArray(),
+    [range.startDate, range.endDate]
   );
-  const dayWorkouts = useLiveQuery(
-    () => db.workouts.where("date").equals(selectedDate).toArray(),
-    [selectedDate]
+  const periodWorkouts = useLiveQuery(
+    () =>
+      db.workouts
+        .where("date")
+        .between(range.startDate, range.endDate, true, true)
+        .toArray(),
+    [range.startDate, range.endDate]
   );
 
   const activeSettings = settings ?? DEFAULT_SETTINGS;
@@ -65,24 +86,59 @@ export function MealsView() {
 
   const mealBySlot = useMemo(() => {
     const map = new Map<number, MealLog>();
-    for (const m of dayMeals ?? []) {
+    if (!range.isSingleDay) return map;
+    for (const m of periodMeals ?? []) {
       map.set(m.slotIndex, m);
     }
     return map;
-  }, [dayMeals]);
+  }, [periodMeals, range.isSingleDay]);
 
-  const totalConsumed = (dayMeals ?? []).reduce(
+  const totalConsumed = (periodMeals ?? []).reduce(
     (sum, m) => sum + (m.isFasting ? 0 : m.totalKcal),
     0
   );
-  const burnedToday =
-    (dayRuns ?? []).reduce((sum, r) => sum + r.caloriesBurned, 0) +
-    (dayWorkouts ?? []).reduce((sum, w) => sum + w.caloriesBurned, 0);
-  const effectiveGoal = activeSettings.calorieGoal + burnedToday;
+  const burnedPeriod =
+    (periodRuns ?? []).reduce((sum, r) => sum + r.caloriesBurned, 0) +
+    (periodWorkouts ?? []).reduce((sum, w) => sum + w.caloriesBurned, 0);
+  const effectiveGoal =
+    activeSettings.calorieGoal * range.daysCount + burnedPeriod;
   const pct = Math.min(
     100,
     Math.round((totalConsumed / Math.max(1, effectiveGoal)) * 100)
   );
+
+  // Per-day breakdown for weekly/monthly modes
+  const dailySummaries = useMemo(() => {
+    if (range.isSingleDay) return [];
+    const byDate = new Map<
+      string,
+      { date: string; totalKcal: number; mealsCount: number; fastingCount: number }
+    >();
+    for (const m of periodMeals ?? []) {
+      if (!m.isFasting && m.totalKcal <= 0 && m.items.length === 0) continue;
+      const prev = byDate.get(m.date) ?? {
+        date: m.date,
+        totalKcal: 0,
+        mealsCount: 0,
+        fastingCount: 0,
+      };
+      if (m.isFasting) {
+        prev.fastingCount += 1;
+      } else {
+        prev.mealsCount += 1;
+        prev.totalKcal += m.totalKcal;
+      }
+      byDate.set(m.date, prev);
+    }
+    return Array.from(byDate.values()).sort((a, b) =>
+      b.date.localeCompare(a.date)
+    );
+  }, [periodMeals, range.isSingleDay]);
+
+  const avgKcalPerActiveDay =
+    dailySummaries.length > 0
+      ? Math.round(totalConsumed / dailySummaries.length)
+      : 0;
 
   const currentMeal =
     activeSlot !== null ? mealBySlot.get(activeSlot) : undefined;
@@ -193,44 +249,44 @@ export function MealsView() {
         <h1 className="text-[26px] font-semibold tracking-tight text-white">
           Refeições
         </h1>
-
-        <div className="flex items-center gap-1.5">
+        {!range.isSingleDay && (
           <GlassButton
             type="button"
-            onClick={() => setSelectedDate((d) => shiftDateKey(d, -1))}
-            aria-label="Dia anterior"
-            className="h-9 w-9 !rounded-full p-0"
+            onClick={() => {
+              setPeriodMode("daily");
+              setAnchorDate(todayKey);
+            }}
+            className="h-9 px-3.5 text-xs font-medium"
           >
-            <ChevronLeft className="h-4 w-4" />
+            Registrar hoje
           </GlassButton>
-
-          <button
-            type="button"
-            onClick={() => setSelectedDate(todayKey)}
-            className="glass-pill rounded-full px-3.5 py-2 text-xs font-medium text-zinc-200 cursor-pointer"
-          >
-            {selectedDate === todayKey ? "Hoje" : formatLongDatePt(selectedDate)}
-          </button>
-
-          <GlassButton
-            type="button"
-            onClick={() => setSelectedDate((d) => shiftDateKey(d, 1))}
-            aria-label="Próximo dia"
-            className="h-9 w-9 !rounded-full p-0"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </GlassButton>
-        </div>
+        )}
       </header>
+
+      {/* Unified Temporal Filter: Diário | Dia anterior | Semanal | Mensal */}
+      <PeriodFilterBar
+        mode={periodMode}
+        anchorDate={anchorDate}
+        onChangeMode={(m) => {
+          setPeriodMode(m);
+          setActiveSlot(null);
+        }}
+        onChangeAnchor={(d) => {
+          setAnchorDate(d);
+          setActiveSlot(null);
+        }}
+        todayKey={todayKey}
+        allowDatePicker
+      />
 
       {/* Minimalist Calorie Summary Card */}
       <GlassCard variant="frosted" className="p-6 space-y-4">
-        <div className="flex items-baseline justify-between">
+        <div className="flex items-baseline justify-between gap-2">
           <div className="text-4xl font-light tracking-tight text-white tabular-nums">
             {totalConsumed.toLocaleString("pt-BR")}{" "}
             <span className="text-lg text-zinc-400">kcal</span>
           </div>
-          <span className="text-sm text-zinc-400 tabular-nums">
+          <span className="text-sm text-zinc-400 tabular-nums shrink-0">
             {effectiveGoal.toLocaleString("pt-BR")} kcal
           </span>
         </div>
@@ -241,70 +297,160 @@ export function MealsView() {
             style={{ width: `${pct}%` }}
           />
         </div>
+
+        {!range.isSingleDay && (
+          <div className="flex items-center justify-between text-xs text-zinc-400 tabular-nums pt-0.5">
+            <span>
+              Média:{" "}
+              <strong className="text-white">
+                {avgKcalPerActiveDay.toLocaleString("pt-BR")} kcal/dia
+              </strong>
+            </span>
+            <span>
+              Gasto:{" "}
+              <strong className="text-white">
+                {burnedPeriod.toLocaleString("pt-BR")} kcal
+              </strong>
+            </span>
+          </div>
+        )}
       </GlassCard>
 
-      {/* 4 Meal Slots */}
-      <div className="space-y-3">
-        {slots.map((slotName, idx) => {
-          const log = mealBySlot.get(idx);
-          const isFasting = log?.isFasting ?? false;
-          const kcal = log?.totalKcal ?? 0;
-          const itemsPreview =
-            !isFasting && log?.items?.length
-              ? log.items.map((i) => i.name).join(" · ")
-              : "";
+      {/* Single Day: 4 Meal Slots | Weekly/Monthly: Per-Day Breakdown */}
+      {range.isSingleDay ? (
+        <div className="space-y-3">
+          {slots.map((slotName, idx) => {
+            const log = mealBySlot.get(idx);
+            const isFasting = log?.isFasting ?? false;
+            const kcal = log?.totalKcal ?? 0;
+            const itemsPreview =
+              !isFasting && log?.items?.length
+                ? log.items.map((i) => i.name).join(" · ")
+                : "";
 
-          return (
-            <button
-              key={idx}
-              type="button"
-              onClick={() => openSlot(idx)}
-              className="block w-full text-left cursor-pointer"
-            >
-              <GlassCard className="p-5 transition-transform duration-150 active:scale-[0.985]">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <div className="glass-pill flex h-10 w-10 shrink-0 items-center justify-center rounded-full">
-                      {isFasting ? (
-                        <Moon className="h-4 w-4 text-white" strokeWidth={1.8} />
-                      ) : (
-                        <Utensils
-                          className="h-4 w-4 text-zinc-200"
-                          strokeWidth={1.8}
-                        />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <span className="block text-base font-medium text-white">
-                        {slotName}
-                      </span>
-                      {itemsPreview && (
-                        <span className="block text-xs text-zinc-400 truncate mt-0.5">
-                          {itemsPreview}
+            return (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => openSlot(idx)}
+                className="block w-full text-left cursor-pointer"
+              >
+                <GlassCard className="p-5 transition-transform duration-150 active:scale-[0.985]">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3.5 min-w-0">
+                      <div className="glass-pill flex h-10 w-10 shrink-0 items-center justify-center rounded-full">
+                        {isFasting ? (
+                          <Moon
+                            className="h-4 w-4 text-white"
+                            strokeWidth={1.8}
+                          />
+                        ) : (
+                          <Utensils
+                            className="h-4 w-4 text-zinc-200"
+                            strokeWidth={1.8}
+                          />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="block text-base font-medium text-white">
+                          {slotName}
                         </span>
-                      )}
+                        {itemsPreview && (
+                          <span className="block text-xs text-zinc-400 truncate mt-0.5">
+                            {itemsPreview}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {isFasting ? (
+                      <span className="glass-pill-active rounded-full px-3 py-1 text-xs font-medium shrink-0">
+                        Jejum
+                      </span>
+                    ) : kcal > 0 ? (
+                      <span className="text-sm font-medium text-white tabular-nums shrink-0">
+                        {kcal} kcal
+                      </span>
+                    ) : (
+                      <span className="glass-pill flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 shrink-0">
+                        <Plus className="h-4 w-4" />
+                      </span>
+                    )}
+                  </div>
+                </GlassCard>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-400">
+              Dias registrados
+            </span>
+            <span className="text-xs text-zinc-500 tabular-nums">
+              {dailySummaries.length}{" "}
+              {dailySummaries.length === 1 ? "dia" : "dias"}
+            </span>
+          </div>
+
+          {dailySummaries.length === 0 ? (
+            <GlassCard className="p-7 text-center space-y-3">
+              <p className="text-sm text-zinc-400">
+                Nenhuma refeição registrada neste período.
+              </p>
+              <GlassButton
+                type="button"
+                active
+                onClick={() => {
+                  setPeriodMode("daily");
+                  setAnchorDate(todayKey);
+                }}
+                className="px-4 py-2.5 text-xs font-medium"
+              >
+                Registrar hoje
+              </GlassButton>
+            </GlassCard>
+          ) : (
+            dailySummaries.map((day) => (
+              <button
+                key={day.date}
+                type="button"
+                onClick={() => {
+                  setPeriodMode(
+                    day.date === yesterdayKey ? "yesterday" : "daily"
+                  );
+                  setAnchorDate(day.date);
+                }}
+                className="block w-full text-left cursor-pointer"
+              >
+                <GlassCard className="px-5 py-4 !rounded-[24px] transition-transform active:scale-[0.985]">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <span className="block text-sm font-medium text-white">
+                        {formatLongDatePt(day.date)}
+                      </span>
+                      <span className="block text-xs text-zinc-400 tabular-nums mt-0.5">
+                        {day.mealsCount}{" "}
+                        {day.mealsCount === 1 ? "refeição" : "refeições"}
+                        {day.fastingCount > 0
+                          ? ` · ${day.fastingCount} jejum`
+                          : ""}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-sm font-medium text-white tabular-nums">
+                        {day.totalKcal.toLocaleString("pt-BR")} kcal
+                      </span>
+                      <ChevronRight className="h-4 w-4 text-zinc-500" />
                     </div>
                   </div>
-
-                  {isFasting ? (
-                    <span className="glass-pill-active rounded-full px-3 py-1 text-xs font-medium shrink-0">
-                      Jejum
-                    </span>
-                  ) : kcal > 0 ? (
-                    <span className="text-sm font-medium text-white tabular-nums shrink-0">
-                      {kcal} kcal
-                    </span>
-                  ) : (
-                    <span className="glass-pill flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 shrink-0">
-                      <Plus className="h-4 w-4" />
-                    </span>
-                  )}
-                </div>
-              </GlassCard>
-            </button>
-          );
-        })}
-      </div>
+                </GlassCard>
+              </button>
+            ))
+          )}
+        </div>
+      )}
 
       {/* Meal Editor Sheet Modal */}
       {activeSlot !== null && (

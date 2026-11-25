@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
-  ChevronLeft,
   ChevronRight,
   Type,
   Palette,
@@ -22,12 +21,12 @@ import {
   AlignRight,
   AlignJustify,
   BookMarked,
-  Calendar,
   Check,
   Highlighter,
 } from "lucide-react";
 import { GlassCard, GlassButton } from "./Glass";
 import { MonthlyBookModal } from "./MonthlyBookModal";
+import { PeriodFilterBar } from "./PeriodFilterBar";
 import {
   db,
   getDateKey,
@@ -39,6 +38,7 @@ import {
   sanitizeDiaryHtml,
   type DiaryEntry,
 } from "@/lib/db";
+import { resolvePeriodRange, type PeriodMode } from "@/lib/period";
 import {
   DIARY_FONTS,
   DIARY_COLORS,
@@ -64,9 +64,17 @@ const DEFAULT_STYLE = {
 
 export function DiaryEditor() {
   const [todayKey] = useState(() => getDateKey());
-  const [selectedDate, setSelectedDate] = useState(() => getDateKey());
+  const yesterdayKey = useMemo(() => shiftDateKey(todayKey, -1), [todayKey]);
+  const [periodMode, setPeriodMode] = useState<PeriodMode>("daily");
+  const [anchorDate, setAnchorDate] = useState(() => getDateKey());
   const [activePanel, setActivePanel] = useState<ToolPanel>("none");
   const [bookOpen, setBookOpen] = useState(false);
+
+  const range = useMemo(
+    () => resolvePeriodRange(periodMode, anchorDate, todayKey),
+    [periodMode, anchorDate, todayKey]
+  );
+  const selectedDate = range.startDate;
 
   const [title, setTitle] = useState("");
   const [fontFamily, setFontFamily] = useState<DiaryFontId>(
@@ -104,17 +112,51 @@ export function DiaryEditor() {
   const changeDate = useCallback(
     async (nextDate: string) => {
       await flushPendingSave();
-      setSelectedDate(nextDate);
+      setPeriodMode(nextDate === yesterdayKey ? "yesterday" : "daily");
+      setAnchorDate(nextDate);
+    },
+    [flushPendingSave, yesterdayKey]
+  );
+
+  const changeMode = useCallback(
+    async (nextMode: PeriodMode) => {
+      await flushPendingSave();
+      setPeriodMode(nextMode);
     },
     [flushPendingSave]
   );
 
-  const monthKey = getMonthKey(selectedDate);
+  const changeAnchor = useCallback(
+    async (nextAnchor: string) => {
+      await flushPendingSave();
+      setAnchorDate(nextAnchor);
+    },
+    [flushPendingSave]
+  );
+
+  const monthKey = range.monthKey;
   const surroundingDays = getSurroundingDays(selectedDate);
 
   const monthEntries = useLiveQuery(
     () => db.diaryEntries.where("monthKey").equals(monthKey).sortBy("date"),
     [monthKey]
+  );
+
+  const periodEntries = useLiveQuery(
+    () =>
+      db.diaryEntries
+        .where("date")
+        .between(range.startDate, range.endDate, true, true)
+        .toArray(),
+    [range.startDate, range.endDate]
+  );
+
+  const filledPeriodEntries = useMemo(
+    () =>
+      (periodEntries ?? [])
+        .filter((e) => e.title.trim() || e.plainText.trim())
+        .sort((a, b) => b.date.localeCompare(a.date)),
+    [periodEntries]
   );
 
   const datesWithEntries = new Set(
@@ -123,8 +165,9 @@ export function DiaryEditor() {
       .map((e) => e.date)
   );
 
-  // Load selected day entry from IndexedDB
+  // Load selected day entry from IndexedDB when in single-day editor view
   useEffect(() => {
+    if (!range.isSingleDay) return;
     let active = true;
     db.diaryEntries.get(selectedDate).then((entry) => {
       if (!active) return;
@@ -154,7 +197,7 @@ export function DiaryEditor() {
     return () => {
       active = false;
     };
-  }, [selectedDate]);
+  }, [selectedDate, range.isSingleDay]);
 
   const persistEntry = useCallback(
     (overrides?: Partial<DiaryEntry>) => {
@@ -303,85 +346,63 @@ export function DiaryEditor() {
         </div>
       </header>
 
-      {/* Day Separator Strip */}
-      <GlassCard className="p-3 space-y-3">
-        <div className="flex items-center justify-between px-1">
-          <GlassButton
-            type="button"
-            onClick={() => changeDate(shiftDateKey(selectedDate, -1))}
-            aria-label="Dia anterior"
-            className="h-8 w-8 !rounded-full p-0"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </GlassButton>
+      {/* Unified Temporal Filter: Diário | Dia anterior | Semanal | Mensal */}
+      <PeriodFilterBar
+        mode={periodMode}
+        anchorDate={anchorDate}
+        onChangeMode={changeMode}
+        onChangeAnchor={changeAnchor}
+        todayKey={todayKey}
+        allowDatePicker
+      />
 
-          <label className="relative inline-flex items-center gap-2 text-sm font-medium text-white cursor-pointer px-2 py-1">
-            <span>{formatLongDatePt(selectedDate)}</span>
-            <Calendar className="h-3.5 w-3.5 text-zinc-400" />
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => {
-                if (e.target.value) changeDate(e.target.value);
-              }}
-              className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
-              aria-label="Escolher data"
-            />
-          </label>
+      {range.isSingleDay ? (
+        <>
+          {/* Day Separator Strip */}
+          <GlassCard className="p-3">
+            <div className="grid grid-cols-7 gap-1.5">
+              {surroundingDays.map((dayKey) => {
+                const isSelected = dayKey === selectedDate;
+                const hasContent = datesWithEntries.has(dayKey);
+                const dayNum = Number(dayKey.slice(8, 10));
 
-          <GlassButton
-            type="button"
-            onClick={() => changeDate(shiftDateKey(selectedDate, 1))}
-            aria-label="Próximo dia"
-            className="h-8 w-8 !rounded-full p-0"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </GlassButton>
-        </div>
+                return (
+                  <button
+                    key={dayKey}
+                    type="button"
+                    onClick={() => changeDate(dayKey)}
+                    className={`flex flex-col items-center justify-center gap-1 rounded-2xl py-2 transition-all duration-150 cursor-pointer ${
+                      isSelected
+                        ? "glass-pill-active"
+                        : "hover:bg-white/[0.06] text-zinc-400"
+                    }`}
+                  >
+                    <span
+                      className={`text-[10px] uppercase ${
+                        isSelected ? "text-black/70" : "text-zinc-500"
+                      }`}
+                    >
+                      {formatShortDayPt(dayKey)}
+                    </span>
+                    <span className="text-sm font-medium tabular-nums">
+                      {dayNum}
+                    </span>
+                    <span
+                      className={`h-1 w-1 rounded-full ${
+                        hasContent
+                          ? isSelected
+                            ? "bg-black"
+                            : "bg-white/80"
+                          : "bg-transparent"
+                      }`}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+          </GlassCard>
 
-        <div className="grid grid-cols-7 gap-1.5">
-          {surroundingDays.map((dayKey) => {
-            const isSelected = dayKey === selectedDate;
-            const hasContent = datesWithEntries.has(dayKey);
-            const dayNum = Number(dayKey.slice(8, 10));
-
-            return (
-              <button
-                key={dayKey}
-                type="button"
-                onClick={() => changeDate(dayKey)}
-                className={`flex flex-col items-center justify-center gap-1 rounded-2xl py-2 transition-all duration-150 cursor-pointer ${
-                  isSelected
-                    ? "glass-pill-active"
-                    : "hover:bg-white/[0.06] text-zinc-400"
-                }`}
-              >
-                <span
-                  className={`text-[10px] uppercase ${
-                    isSelected ? "text-black/70" : "text-zinc-500"
-                  }`}
-                >
-                  {formatShortDayPt(dayKey)}
-                </span>
-                <span className="text-sm font-medium tabular-nums">
-                  {dayNum}
-                </span>
-                <span
-                  className={`h-1 w-1 rounded-full ${
-                    hasContent
-                      ? isSelected
-                        ? "bg-black"
-                        : "bg-white/80"
-                      : "bg-transparent"
-                  }`}
-                />
-              </button>
-            );
-          })}
-        </div>
-      </GlassCard>
-
-      {/* Compact Glass Customization Bar */}
+          {/* Compact Glass Customization Bar */}
       <div className="space-y-2.5">
         <div className="grid grid-cols-4 gap-2">
           <GlassButton
@@ -676,6 +697,68 @@ export function DiaryEditor() {
           className="diary-editor"
         />
       </GlassCard>
+        </>
+      ) : (
+        /* Weekly / Monthly Period Entries List */
+        <div className="space-y-3">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-400">
+              Páginas escritas
+            </span>
+            <span className="text-xs text-zinc-500 tabular-nums">
+              {filledPeriodEntries.length}{" "}
+              {filledPeriodEntries.length === 1 ? "página" : "páginas"}
+            </span>
+          </div>
+
+          {filledPeriodEntries.length === 0 ? (
+            <GlassCard variant="frosted" className="p-8 text-center space-y-4">
+              <p className="text-sm text-zinc-400">
+                Nenhuma página escrita em {range.label}.
+              </p>
+              <GlassButton
+                type="button"
+                active
+                onClick={() => changeDate(todayKey)}
+                className="px-5 py-2.5 text-xs font-medium"
+              >
+                Escrever hoje
+              </GlassButton>
+            </GlassCard>
+          ) : (
+            filledPeriodEntries.map((entry) => (
+              <button
+                key={entry.date}
+                type="button"
+                onClick={() => changeDate(entry.date)}
+                className="block w-full text-left cursor-pointer"
+              >
+                <GlassCard className="p-5 space-y-2 transition-transform active:scale-[0.985]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] uppercase tracking-[0.14em] text-zinc-400">
+                      {formatLongDatePt(entry.date)}
+                    </span>
+                    <ChevronRight className="h-4 w-4 text-zinc-500" />
+                  </div>
+                  {entry.title.trim() && (
+                    <h3
+                      className="text-lg font-semibold text-white truncate"
+                      style={{ fontFamily: getFontCss(entry.fontFamily) }}
+                    >
+                      {entry.title}
+                    </h3>
+                  )}
+                  {entry.plainText.trim() && (
+                    <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">
+                      {entry.plainText.trim()}
+                    </p>
+                  )}
+                </GlassCard>
+              </button>
+            ))
+          )}
+        </div>
+      )}
 
       {/* Monthly Book Compiler & PDF Export Modal */}
       <MonthlyBookModal

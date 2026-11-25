@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { GlassCard, GlassButton } from "./Glass";
 import { PhotoBookModal } from "./PhotoBookModal";
+import { PeriodFilterBar } from "./PeriodFilterBar";
 import {
   db,
   DEFAULT_SETTINGS,
@@ -25,6 +26,11 @@ import {
   type PhotoAngle,
   type ProgressPhoto,
 } from "@/lib/db";
+import {
+  isDateInPeriod,
+  resolvePeriodRange,
+  type PeriodMode,
+} from "@/lib/period";
 import { compressImageFile } from "@/lib/images";
 
 const ANGLES: { id: "todas" | PhotoAngle; label: string }[] = [
@@ -47,6 +53,10 @@ export function ProgressView() {
     []
   );
 
+  const [todayKey] = useState(() => getDateKey());
+  const [periodMode, setPeriodMode] = useState<PeriodMode>("monthly");
+  const [anchorDate, setAnchorDate] = useState(() => getDateKey());
+
   const [filter, setFilter] = useState<"todas" | PhotoAngle>("todas");
   const [blurred, setBlurred] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
@@ -68,11 +78,16 @@ export function ProgressView() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const range = useMemo(
+    () => resolvePeriodRange(periodMode, anchorDate, todayKey),
+    [periodMode, anchorDate, todayKey]
+  );
+
   const filteredPhotos = useMemo(() => {
-    const list = photos ?? [];
+    const list = (photos ?? []).filter((p) => isDateInPeriod(p.date, range));
     if (filter === "todas") return list;
     return list.filter((p) => p.angle === filter);
-  }, [photos, filter]);
+  }, [photos, filter, range]);
 
   // Chronological oldest -> newest for comparison defaults
   const comparePool = useMemo(
@@ -94,7 +109,7 @@ export function ProgressView() {
 
   const openAddSheet = () => {
     setPreviewUrl(null);
-    setPhotoDate(getDateKey());
+    setPhotoDate(range.isSingleDay ? range.startDate : todayKey);
     setPhotoAngle(filter === "todas" ? "frente" : filter);
     setPhotoWeight(String((settings ?? DEFAULT_SETTINGS).weightKg));
     setAddOpen(true);
@@ -181,6 +196,24 @@ export function ProgressView() {
         </div>
       </header>
 
+      {/* Unified Temporal Filter: Diário | Dia anterior | Semanal | Mensal */}
+      <PeriodFilterBar
+        mode={periodMode}
+        anchorDate={anchorDate}
+        onChangeMode={(m) => {
+          setPeriodMode(m);
+          setBeforeId(null);
+          setAfterId(null);
+        }}
+        onChangeAnchor={(d) => {
+          setAnchorDate(d);
+          setBeforeId(null);
+          setAfterId(null);
+        }}
+        todayKey={todayKey}
+        allowDatePicker
+      />
+
       {/* Monthly Evolution Photo Book Banner */}
       {(photos?.length ?? 0) > 0 && (
         <button
@@ -260,18 +293,45 @@ export function ProgressView() {
           <div className="glass-pill flex h-16 w-16 items-center justify-center rounded-full">
             <Camera className="h-7 w-7 text-white" strokeWidth={1.6} />
           </div>
-          <span className="text-base font-medium text-white">
-            Fotos de progressão
-          </span>
-          <GlassButton
-            type="button"
-            active
-            onClick={openAddSheet}
-            className="px-5 py-3 text-xs font-medium"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Adicionar primeira foto</span>
-          </GlassButton>
+          <div className="space-y-1">
+            <span className="block text-base font-medium text-white">
+              {(photos?.length ?? 0) > 0
+                ? "Sem fotos neste período"
+                : "Fotos de progressão"}
+            </span>
+            {(photos?.length ?? 0) > 0 && (
+              <span className="block text-xs text-zinc-400">
+                {range.label} · Use o filtro acima ou abra o Livro Mensal
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <GlassButton
+              type="button"
+              active
+              onClick={openAddSheet}
+              className="px-5 py-3 text-xs font-medium"
+            >
+              <Plus className="h-4 w-4" />
+              <span>
+                {(photos?.length ?? 0) > 0
+                  ? "Adicionar foto"
+                  : "Adicionar primeira foto"}
+              </span>
+            </GlassButton>
+            {(photos?.length ?? 0) > 0 && periodMode !== "monthly" && (
+              <GlassButton
+                type="button"
+                onClick={() => {
+                  setPeriodMode("monthly");
+                  setAnchorDate(todayKey);
+                }}
+                className="px-4 py-3 text-xs font-medium"
+              >
+                Ver mês
+              </GlassButton>
+            )}
+          </div>
         </GlassCard>
       ) : compareMode && beforePhoto && afterPhoto ? (
         /* Interactive Before / After Glass Slider */

@@ -10,8 +10,6 @@ import {
   X,
   Trash2,
   BookMarked,
-  ChevronLeft,
-  ChevronRight,
   Flame,
   Clock,
   Sparkles,
@@ -21,6 +19,7 @@ import {
   WorkoutBookModal,
   type WorkoutBookPeriod,
 } from "./WorkoutBookModal";
+import { PeriodFilterBar } from "./PeriodFilterBar";
 import {
   db,
   DEFAULT_SETTINGS,
@@ -28,15 +27,8 @@ import {
   getDateKey,
   getMonthKey,
   getIsoWeekKey,
-  getWeekBounds,
-  shiftDateKey,
-  shiftWeekDateKey,
-  shiftMonthKey,
-  formatLongDatePt,
   formatShortDatePt,
   formatShortDayPt,
-  formatMonthYearPt,
-  formatWeekRangePt,
   type WorkoutCategoryId,
   type WorkoutIntensity,
 } from "@/lib/db";
@@ -49,18 +41,19 @@ import {
   summarizeUnifiedWorkouts,
   formatMinutesHuman,
 } from "@/lib/workouts";
+import {
+  isDateInPeriod,
+  resolvePeriodRange,
+  type PeriodMode,
+} from "@/lib/period";
 import { formatKm } from "@/lib/running";
 
 const DURATION_PRESETS = [20, 30, 45, 60, 90];
 
 export function WorkoutsView() {
   const [todayKey] = useState(() => getDateKey());
-  const [selectedDate, setSelectedDate] = useState(() => getDateKey());
-
-  // Period results view state
-  const [resultsTab, setResultsTab] = useState<WorkoutBookPeriod>("week");
-  const [weekAnchor, setWeekAnchor] = useState(() => getDateKey());
-  const [resultsMonth, setResultsMonth] = useState(() => getMonthKey(getDateKey()));
+  const [periodMode, setPeriodMode] = useState<PeriodMode>("daily");
+  const [anchorDate, setAnchorDate] = useState(() => getDateKey());
 
   // Book modal
   const [bookOpen, setBookOpen] = useState(false);
@@ -80,6 +73,11 @@ export function WorkoutsView() {
     ensureSettings().catch(() => {});
   }, []);
 
+  const range = useMemo(
+    () => resolvePeriodRange(periodMode, anchorDate, todayKey),
+    [periodMode, anchorDate, todayKey]
+  );
+
   const settings = useLiveQuery(() => db.settings.get("user"), []);
   const allWorkouts = useLiveQuery(() => db.workouts.toArray(), []);
   const allRuns = useLiveQuery(() => db.runs.toArray(), []);
@@ -91,41 +89,24 @@ export function WorkoutsView() {
     [allWorkouts, allRuns]
   );
 
-  // Selected day items (manual workouts + auto-synced runs)
-  const dayEntries = useMemo(
-    () => unifiedAll.filter((e) => e.date === selectedDate),
-    [unifiedAll, selectedDate]
+  // Entries strictly filtered to active PeriodFilterBar range
+  const periodEntries = useMemo(
+    () => unifiedAll.filter((e) => isDateInPeriod(e.date, range)),
+    [unifiedAll, range]
   );
-  const daySummary = useMemo(
-    () => summarizeUnifiedWorkouts(dayEntries),
-    [dayEntries]
-  );
-
-  // Weekly / Monthly period items
-  const weekBounds = useMemo(() => getWeekBounds(weekAnchor), [weekAnchor]);
-
-  const periodEntries = useMemo(() => {
-    if (resultsTab === "week") {
-      return unifiedAll.filter(
-        (e) => e.date >= weekBounds.startDate && e.date <= weekBounds.endDate
-      );
-    }
-    return unifiedAll.filter((e) => e.monthKey === resultsMonth);
-  }, [unifiedAll, resultsTab, weekBounds, resultsMonth]);
-
   const periodSummary = useMemo(
     () => summarizeUnifiedWorkouts(periodEntries),
     [periodEntries]
   );
 
-  // Bar chart data (7 days in week mode, 4-5 weekly buckets in month mode)
+  // Bar chart data for Weekly & Monthly modes
   const chartBars = useMemo(() => {
-    if (resultsTab === "week") {
+    if (periodMode === "weekly") {
       const byDay = new Map<string, number>();
       for (const item of periodEntries) {
         byDay.set(item.date, (byDay.get(item.date) ?? 0) + item.caloriesBurned);
       }
-      const raw = weekBounds.days.map((d) => ({
+      const raw = range.days.map((d) => ({
         key: d,
         label: formatShortDayPt(d),
         kcal: byDay.get(d) ?? 0,
@@ -138,22 +119,25 @@ export function WorkoutsView() {
       }));
     }
 
-    // Month mode: group into S1..S5 by day of month
-    const buckets = [0, 0, 0, 0, 0];
-    for (const item of periodEntries) {
-      const dayNum = parseInt(item.date.slice(8, 10), 10) || 1;
-      const idx = Math.min(4, Math.floor((dayNum - 1) / 7));
-      buckets[idx] += item.caloriesBurned;
+    if (periodMode === "monthly") {
+      const buckets = [0, 0, 0, 0, 0];
+      for (const item of periodEntries) {
+        const dayNum = parseInt(item.date.slice(8, 10), 10) || 1;
+        const idx = Math.min(4, Math.floor((dayNum - 1) / 7));
+        buckets[idx] += item.caloriesBurned;
+      }
+      const maxKcal = Math.max(1, ...buckets);
+      return buckets.map((kcal, i) => ({
+        key: `S${i + 1}`,
+        label: `Sem ${i + 1}`,
+        kcal,
+        isToday: false,
+        pct: kcal > 0 ? Math.max(12, Math.round((kcal / maxKcal) * 100)) : 4,
+      }));
     }
-    const maxKcal = Math.max(1, ...buckets);
-    return buckets.map((kcal, i) => ({
-      key: `S${i + 1}`,
-      label: `Sem ${i + 1}`,
-      kcal,
-      isToday: false,
-      pct: kcal > 0 ? Math.max(12, Math.round((kcal / maxKcal) * 100)) : 4,
-    }));
-  }, [resultsTab, periodEntries, weekBounds.days, todayKey]);
+
+    return [];
+  }, [periodMode, periodEntries, range.days, todayKey]);
 
   const parsedDuration = Math.max(0, parseInt(durationMin, 10) || 0);
   const autoEstimatedKcal = estimateWorkoutCalories(
@@ -178,7 +162,7 @@ export function WorkoutsView() {
     setIntensity("moderado");
     setCustomKcal("");
     setNotes("");
-    setWorkoutDate(selectedDate);
+    setWorkoutDate(range.isSingleDay ? range.startDate : todayKey);
     setAddOpen(true);
   };
 
@@ -188,7 +172,7 @@ export function WorkoutsView() {
     setSaving(true);
     try {
       const def = getCategoryDef(category);
-      const dateStr = workoutDate || selectedDate;
+      const dateStr = workoutDate || todayKey;
       await db.workouts.add({
         date: dateStr,
         weekKey: getIsoWeekKey(dateStr),
@@ -213,6 +197,8 @@ export function WorkoutsView() {
   };
 
   const activeCategoryDef = getCategoryDef(category);
+  const bookInitialPeriod: WorkoutBookPeriod =
+    periodMode === "monthly" ? "month" : "week";
 
   return (
     <div className="space-y-5 pt-2">
@@ -263,46 +249,25 @@ export function WorkoutsView() {
         </div>
       </header>
 
-      {/* Day Switcher */}
-      <div className="flex items-center justify-between px-1">
-        <GlassButton
-          type="button"
-          onClick={() => setSelectedDate((d) => shiftDateKey(d, -1))}
-          aria-label="Dia anterior"
-          className="h-9 w-9 !rounded-full p-0"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </GlassButton>
+      {/* Unified Temporal Filter: Diário | Dia anterior | Semanal | Mensal */}
+      <PeriodFilterBar
+        mode={periodMode}
+        anchorDate={anchorDate}
+        onChangeMode={setPeriodMode}
+        onChangeAnchor={setAnchorDate}
+        todayKey={todayKey}
+        allowDatePicker
+      />
 
-        <button
-          type="button"
-          onClick={() => setSelectedDate(todayKey)}
-          className="glass-pill rounded-full px-4 py-2 text-xs font-medium text-zinc-200 cursor-pointer"
-        >
-          {selectedDate === todayKey
-            ? `Hoje · ${formatShortDatePt(todayKey)}`
-            : formatLongDatePt(selectedDate)}
-        </button>
-
-        <GlassButton
-          type="button"
-          onClick={() => setSelectedDate((d) => shiftDateKey(d, 1))}
-          aria-label="Próximo dia"
-          className="h-9 w-9 !rounded-full p-0"
-        >
-          <ChevronRight className="h-4 w-4" />
-        </GlassButton>
-      </div>
-
-      {/* Today's Workout Hero Card */}
+      {/* Period Hero Summary Card */}
       <GlassCard variant="frosted" className="p-6 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div>
             <span className="block text-xs text-zinc-400">
-              Gasto no dia (treinos + corrida)
+              Gasto em {range.shortLabel} (treinos + corrida)
             </span>
             <div className="mt-1 text-4xl font-light tracking-tight text-white tabular-nums">
-              {daySummary.totalCalories.toLocaleString("pt-BR")}{" "}
+              {periodSummary.totalCalories.toLocaleString("pt-BR")}{" "}
               <span className="text-lg text-zinc-400">kcal</span>
             </div>
           </div>
@@ -315,37 +280,119 @@ export function WorkoutsView() {
         <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-300 tabular-nums">
           <span className="glass-pill inline-flex items-center gap-1.5 rounded-full px-3 py-1.5">
             <Dumbbell className="h-3 w-3" />
-            {daySummary.totalSessions}{" "}
-            {daySummary.totalSessions === 1 ? "sessão" : "sessões"}
+            {periodSummary.totalSessions}{" "}
+            {periodSummary.totalSessions === 1 ? "sessão" : "sessões"}
           </span>
           <span className="glass-pill inline-flex items-center gap-1.5 rounded-full px-3 py-1.5">
             <Clock className="h-3 w-3" />
-            {formatMinutesHuman(daySummary.totalMinutes)}
+            {formatMinutesHuman(periodSummary.totalMinutes)}
           </span>
-          {daySummary.runCount > 0 && (
+          {periodSummary.runCount > 0 && (
             <span className="glass-pill inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-white">
               <Footprints className="h-3 w-3" />
-              {formatKm(daySummary.totalRunKm)} km (auto)
+              {formatKm(periodSummary.totalRunKm)} km (auto)
             </span>
           )}
         </div>
       </GlassCard>
 
-      {/* Today's Sessions List */}
+      {/* Weekly / Monthly Visual Results & Modality Breakdown */}
+      {!range.isSingleDay && (
+        <GlassCard className="p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-400">
+              Resultados · {range.shortLabel}
+            </span>
+            <GlassButton
+              type="button"
+              onClick={() => setBookOpen(true)}
+              className="h-8 px-3 text-[11px] font-medium !rounded-xl"
+            >
+              <BookMarked className="h-3.5 w-3.5" />
+              <span>Abrir Livro</span>
+            </GlassButton>
+          </div>
+
+          {/* Monochrome Activity Bar Chart */}
+          <div className="glass-obsidian rounded-2xl px-3.5 pt-4 pb-3">
+            <div className="flex items-end justify-between gap-2 h-24">
+              {chartBars.map((bar) => (
+                <div
+                  key={bar.key}
+                  className="flex flex-1 flex-col items-center justify-end gap-1.5 h-full"
+                >
+                  <div className="flex flex-1 w-full items-end justify-center">
+                    <div
+                      className={`w-full max-w-[22px] rounded-t-lg transition-all duration-500 ${
+                        bar.kcal > 0
+                          ? "bg-gradient-to-t from-zinc-400 via-zinc-200 to-white shadow-[0_0_12px_rgba(255,255,255,0.28)]"
+                          : "bg-white/[0.08]"
+                      }`}
+                      style={{ height: `${bar.pct}%` }}
+                      title={`${bar.label}: ${bar.kcal} kcal`}
+                    />
+                  </div>
+                  <span
+                    className={`text-[10px] capitalize ${
+                      bar.isToday ? "text-white font-semibold" : "text-zinc-500"
+                    }`}
+                  >
+                    {bar.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Modality Breakdown */}
+          {periodSummary.breakdown.length > 0 && (
+            <div className="space-y-2.5">
+              <span className="block text-[11px] uppercase tracking-[0.14em] text-zinc-400">
+                Por modalidade
+              </span>
+              {periodSummary.breakdown.map((mod) => (
+                <div key={mod.label} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs tabular-nums">
+                    <span className="text-zinc-200">
+                      <strong className="font-medium text-white">
+                        {mod.label}
+                      </strong>{" "}
+                      <span className="text-zinc-400">
+                        · {mod.count}x · {formatMinutesHuman(mod.minutes)}
+                      </span>
+                    </span>
+                    <span className="text-white">
+                      {mod.calories.toLocaleString("pt-BR")} kcal
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.07]">
+                    <div
+                      className="h-full rounded-full bg-white/85"
+                      style={{ width: `${Math.max(5, mod.pctCalories)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </GlassCard>
+      )}
+
+      {/* Sessions List for Selected Period */}
       <div className="space-y-2.5">
         <div className="flex items-center justify-between px-1">
           <span className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-400">
-            {selectedDate === todayKey ? "Treinos de hoje" : "Treinos do dia"}
+            {range.isSingleDay ? `Treinos · ${range.shortLabel}` : "Histórico do período"}
           </span>
           <span className="text-[11px] text-zinc-500">
             Corridas entram automaticamente
           </span>
         </div>
 
-        {dayEntries.length === 0 ? (
+        {periodEntries.length === 0 ? (
           <GlassCard className="p-5 space-y-4">
             <p className="text-sm text-zinc-400 text-center">
-              Nenhum treino registrado neste dia. Escolha um atalho rápido:
+              Nenhum treino registrado em {range.label}. Atalhos rápidos:
             </p>
             <div className="grid grid-cols-2 gap-2">
               <GlassButton
@@ -379,7 +426,7 @@ export function WorkoutsView() {
             </div>
           </GlassCard>
         ) : (
-          dayEntries.map((item) => {
+          periodEntries.map((item) => {
             if (item.source === "run") {
               return (
                 <Link key={item.uid} href="/corrida" className="block">
@@ -399,6 +446,9 @@ export function WorkoutsView() {
                             </span>
                           </div>
                           <span className="block text-xs text-zinc-400 tabular-nums truncate mt-0.5">
+                            {!range.isSingleDay
+                              ? `${formatShortDatePt(item.date)} · `
+                              : ""}
                             {item.subtitle}
                           </span>
                         </div>
@@ -427,6 +477,9 @@ export function WorkoutsView() {
                         {item.title}
                       </span>
                       <span className="block text-xs text-zinc-400 tabular-nums truncate">
+                        {!range.isSingleDay
+                          ? `${formatShortDatePt(item.date)} · `
+                          : ""}
                         {item.subtitle}
                         {item.notes ? ` · ${item.notes}` : ""}
                       </span>
@@ -452,206 +505,6 @@ export function WorkoutsView() {
           })
         )}
       </div>
-
-      {/* Weekly & Monthly Results Section */}
-      <GlassCard className="p-5 space-y-5">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5">
-            <GlassButton
-              type="button"
-              active={resultsTab === "week"}
-              onClick={() => setResultsTab("week")}
-              className="h-8 px-3.5 text-xs font-medium !rounded-xl"
-            >
-              Semana
-            </GlassButton>
-            <GlassButton
-              type="button"
-              active={resultsTab === "month"}
-              onClick={() => setResultsTab("month")}
-              className="h-8 px-3.5 text-xs font-medium !rounded-xl"
-            >
-              Mês
-            </GlassButton>
-          </div>
-
-          <GlassButton
-            type="button"
-            onClick={() => setBookOpen(true)}
-            className="h-8 px-3 text-[11px] font-medium !rounded-xl"
-          >
-            <BookMarked className="h-3.5 w-3.5" />
-            <span>Ver Livro</span>
-          </GlassButton>
-        </div>
-
-        {/* Period Navigator */}
-        <div className="flex items-center justify-between">
-          <GlassButton
-            type="button"
-            onClick={() =>
-              resultsTab === "week"
-                ? setWeekAnchor((d) => shiftWeekDateKey(d, -1))
-                : setResultsMonth((m) => shiftMonthKey(m, -1))
-            }
-            aria-label="Período anterior"
-            className="h-8 w-8 !rounded-full p-0"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </GlassButton>
-
-          <span className="text-xs font-medium text-zinc-200">
-            {resultsTab === "week"
-              ? `Sem ${weekBounds.weekKey.split("-W")[1]} · ${formatWeekRangePt(weekBounds.startDate, weekBounds.endDate)}`
-              : formatMonthYearPt(resultsMonth)}
-          </span>
-
-          <GlassButton
-            type="button"
-            onClick={() =>
-              resultsTab === "week"
-                ? setWeekAnchor((d) => shiftWeekDateKey(d, 1))
-                : setResultsMonth((m) => shiftMonthKey(m, 1))
-            }
-            aria-label="Próximo período"
-            className="h-8 w-8 !rounded-full p-0"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </GlassButton>
-        </div>
-
-        {/* 3 Result Tiles */}
-        <div className="grid grid-cols-3 gap-2">
-          <div className="glass-obsidian rounded-2xl p-3 text-center">
-            <span className="block text-[10px] uppercase tracking-wider text-zinc-500">
-              Treinos
-            </span>
-            <span className="mt-0.5 block text-lg font-light text-white tabular-nums">
-              {periodSummary.totalSessions}
-            </span>
-          </div>
-          <div className="glass-obsidian rounded-2xl p-3 text-center">
-            <span className="block text-[10px] uppercase tracking-wider text-zinc-500">
-              Tempo
-            </span>
-            <span className="mt-0.5 block text-lg font-light text-white tabular-nums">
-              {formatMinutesHuman(periodSummary.totalMinutes)}
-            </span>
-          </div>
-          <div className="glass-obsidian rounded-2xl p-3 text-center">
-            <span className="block text-[10px] uppercase tracking-wider text-zinc-500">
-              Calorias
-            </span>
-            <span className="mt-0.5 block text-lg font-light text-white tabular-nums">
-              {periodSummary.totalCalories.toLocaleString("pt-BR")}
-            </span>
-          </div>
-        </div>
-
-        {/* Monochrome Activity Bar Chart */}
-        <div className="glass-obsidian rounded-2xl px-3.5 pt-4 pb-3">
-          <div className="flex items-end justify-between gap-2 h-24">
-            {chartBars.map((bar) => (
-              <div
-                key={bar.key}
-                className="flex flex-1 flex-col items-center justify-end gap-1.5 h-full"
-              >
-                <div className="flex flex-1 w-full items-end justify-center">
-                  <div
-                    className={`w-full max-w-[22px] rounded-t-lg transition-all duration-500 ${
-                      bar.kcal > 0
-                        ? "bg-gradient-to-t from-zinc-400 via-zinc-200 to-white shadow-[0_0_12px_rgba(255,255,255,0.28)]"
-                        : "bg-white/[0.08]"
-                    }`}
-                    style={{ height: `${bar.pct}%` }}
-                    title={`${bar.label}: ${bar.kcal} kcal`}
-                  />
-                </div>
-                <span
-                  className={`text-[10px] capitalize ${
-                    bar.isToday ? "text-white font-semibold" : "text-zinc-500"
-                  }`}
-                >
-                  {bar.label}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Modality Breakdown */}
-        {periodSummary.breakdown.length > 0 && (
-          <div className="space-y-2.5">
-            <span className="block text-[11px] uppercase tracking-[0.14em] text-zinc-400">
-              Por modalidade
-            </span>
-            {periodSummary.breakdown.map((mod) => (
-              <div key={mod.label} className="space-y-1">
-                <div className="flex items-center justify-between text-xs tabular-nums">
-                  <span className="text-zinc-200">
-                    <strong className="font-medium text-white">
-                      {mod.label}
-                    </strong>{" "}
-                    <span className="text-zinc-400">
-                      · {mod.count}x · {formatMinutesHuman(mod.minutes)}
-                    </span>
-                  </span>
-                  <span className="text-white">
-                    {mod.calories.toLocaleString("pt-BR")} kcal
-                  </span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.07]">
-                  <div
-                    className="h-full rounded-full bg-white/85"
-                    style={{ width: `${Math.max(5, mod.pctCalories)}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Period History Feed */}
-        {periodEntries.length > 0 ? (
-          <div className="space-y-2 border-t border-white/10 pt-4">
-            <span className="block text-[11px] uppercase tracking-[0.14em] text-zinc-400">
-              Histórico do período
-            </span>
-            {periodEntries.slice(0, 8).map((item) => (
-              <div
-                key={item.uid}
-                className="flex items-center justify-between gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.03] px-3.5 py-2.5 text-xs"
-              >
-                <div className="min-w-0">
-                  <span className="block font-medium text-white truncate">
-                    {item.title}
-                    {item.source === "run" ? " (auto)" : ""}
-                  </span>
-                  <span className="block text-[11px] text-zinc-400 tabular-nums truncate">
-                    {formatShortDatePt(item.date)} · {item.subtitle}
-                  </span>
-                </div>
-                <span className="font-medium text-zinc-200 tabular-nums shrink-0">
-                  {item.caloriesBurned} kcal
-                </span>
-              </div>
-            ))}
-            {periodEntries.length > 8 && (
-              <button
-                type="button"
-                onClick={() => setBookOpen(true)}
-                className="w-full py-2 text-center text-xs text-zinc-400 hover:text-white cursor-pointer"
-              >
-                Ver todos os {periodEntries.length} treinos no Livro →
-              </button>
-            )}
-          </div>
-        ) : (
-          <p className="py-4 text-center text-xs text-zinc-500">
-            Sem treinos registrados neste período.
-          </p>
-        )}
-      </GlassCard>
 
       {/* Register Workout Sheet Modal */}
       {addOpen && (
@@ -836,9 +689,9 @@ export function WorkoutsView() {
       {/* Weekly & Monthly Workout Book Modal */}
       <WorkoutBookModal
         open={bookOpen}
-        initialPeriod={resultsTab}
-        initialDateKey={weekAnchor}
-        initialMonthKey={resultsMonth}
+        initialPeriod={bookInitialPeriod}
+        initialDateKey={range.anchorDate}
+        initialMonthKey={range.monthKey}
         onClose={() => setBookOpen(false)}
       />
     </div>

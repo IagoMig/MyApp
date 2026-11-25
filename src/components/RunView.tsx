@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { GlassCard, GlassButton } from "./Glass";
 import { RunMap } from "./RunMap";
+import { PeriodFilterBar } from "./PeriodFilterBar";
 import {
   db,
   DEFAULT_SETTINGS,
@@ -34,6 +35,11 @@ import {
   formatPace,
   formatKm,
 } from "@/lib/running";
+import {
+  isDateInPeriod,
+  resolvePeriodRange,
+  type PeriodMode,
+} from "@/lib/period";
 
 type RunStatus = "idle" | "running" | "paused";
 
@@ -52,11 +58,38 @@ interface WakeLockSentinelLike {
 }
 
 export function RunView() {
+  const [todayKey] = useState(() => getDateKey());
+  const [periodMode, setPeriodMode] = useState<PeriodMode>("daily");
+  const [anchorDate, setAnchorDate] = useState(() => getDateKey());
+
+  const range = useMemo(
+    () => resolvePeriodRange(periodMode, anchorDate, todayKey),
+    [periodMode, anchorDate, todayKey]
+  );
+
   const settings = useLiveQuery(() => db.settings.get("user"), []);
-  const savedRuns = useLiveQuery(
-    () => db.runs.orderBy("startedAt").reverse().limit(30).toArray(),
+  const allSavedRuns = useLiveQuery(
+    () => db.runs.orderBy("startedAt").reverse().toArray(),
     []
   );
+
+  const savedRuns = useMemo(
+    () => (allSavedRuns ?? []).filter((r) => isDateInPeriod(r.date, range)),
+    [allSavedRuns, range]
+  );
+
+  const periodRunTotals = useMemo(() => {
+    const km = savedRuns.reduce((s, r) => s + r.distanceKm, 0);
+    const sec = savedRuns.reduce((s, r) => s + r.durationSec, 0);
+    const kcal = savedRuns.reduce((s, r) => s + r.caloriesBurned, 0);
+    return {
+      count: savedRuns.length,
+      km,
+      sec,
+      kcal,
+      avgPace: calculatePaceSecPerKm(km, sec),
+    };
+  }, [savedRuns]);
 
   const weightKg = (settings ?? DEFAULT_SETTINGS).weightKg;
 
@@ -372,13 +405,26 @@ export function RunView() {
 
         <GlassButton
           type="button"
-          onClick={() => setManualOpen(true)}
+          onClick={() => {
+            setManualDate(range.isSingleDay ? range.startDate : todayKey);
+            setManualOpen(true);
+          }}
           className="h-10 px-3.5 text-xs font-medium"
         >
           <Plus className="h-4 w-4" />
           <span>Manual</span>
         </GlassButton>
       </header>
+
+      {/* Unified Temporal Filter: Diário | Dia anterior | Semanal | Mensal */}
+      <PeriodFilterBar
+        mode={periodMode}
+        anchorDate={anchorDate}
+        onChangeMode={setPeriodMode}
+        onChangeAnchor={setAnchorDate}
+        todayKey={todayKey}
+        allowDatePicker
+      />
 
       {/* Integrated Dark Monochrome Map */}
       <GlassCard className="relative h-[260px] p-1.5 overflow-hidden">
@@ -514,10 +560,49 @@ export function RunView() {
         )}
       </GlassCard>
 
-      {/* Saved Runs History */}
-      {(savedRuns?.length ?? 0) > 0 && (
+      {/* Filtered Period Summary + Saved Runs History */}
+      <GlassCard className="p-4 space-y-3">
+        <div className="flex items-center justify-between px-1">
+          <span className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-400">
+            Corridas · {range.shortLabel}
+          </span>
+          <span className="text-xs text-zinc-400 tabular-nums">
+            {periodRunTotals.count}{" "}
+            {periodRunTotals.count === 1 ? "corrida" : "corridas"}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 text-center tabular-nums">
+          <div className="glass-obsidian rounded-2xl p-2.5">
+            <span className="block text-[10px] uppercase text-zinc-500">
+              Distância
+            </span>
+            <span className="text-sm font-medium text-white">
+              {formatKm(periodRunTotals.km)} km
+            </span>
+          </div>
+          <div className="glass-obsidian rounded-2xl p-2.5">
+            <span className="block text-[10px] uppercase text-zinc-500">
+              Ritmo méd.
+            </span>
+            <span className="text-sm font-medium text-white">
+              {formatPace(periodRunTotals.avgPace)}
+            </span>
+          </div>
+          <div className="glass-obsidian rounded-2xl p-2.5">
+            <span className="block text-[10px] uppercase text-zinc-500">
+              Calorias
+            </span>
+            <span className="text-sm font-medium text-white">
+              {periodRunTotals.kcal} kcal
+            </span>
+          </div>
+        </div>
+      </GlassCard>
+
+      {savedRuns.length > 0 ? (
         <div className="space-y-2.5">
-          {(savedRuns ?? []).map((run) => {
+          {savedRuns.map((run) => {
             const isViewing = inspectedRun?.id === run.id;
             return (
               <div
@@ -540,14 +625,19 @@ export function RunView() {
                     className="flex flex-1 items-center gap-3.5 text-left cursor-pointer"
                   >
                     <div className="glass-pill flex h-10 w-10 shrink-0 items-center justify-center rounded-full">
-                      <Footprints className="h-4 w-4 text-white" strokeWidth={1.8} />
+                      <Footprints
+                        className="h-4 w-4 text-white"
+                        strokeWidth={1.8}
+                      />
                     </div>
                     <div>
                       <span className="block text-sm font-medium text-white tabular-nums">
-                        {formatKm(run.distanceKm)} km · {formatPace(run.avgPaceSecPerKm)}
+                        {formatKm(run.distanceKm)} km ·{" "}
+                        {formatPace(run.avgPaceSecPerKm)}
                       </span>
                       <span className="block text-xs text-zinc-400 tabular-nums">
-                        {formatShortDatePt(run.date)} · {formatDuration(run.durationSec)} ·{" "}
+                        {formatShortDatePt(run.date)} ·{" "}
+                        {formatDuration(run.durationSec)} ·{" "}
                         {run.caloriesBurned} kcal
                       </span>
                     </div>
@@ -566,6 +656,10 @@ export function RunView() {
             );
           })}
         </div>
+      ) : (
+        <GlassCard className="p-6 text-center text-xs text-zinc-400">
+          Nenhuma corrida registrada em {range.label}.
+        </GlassCard>
       )}
 
       {/* OLED Dark Screen Wake Lock Overlay (keeps iPhone GPS alive) */}
